@@ -49,7 +49,7 @@ function sizeOf(object) {
 }
 
 function isString(target) {
-    return typeof target === 'string' || typeof(target) == 'string';
+    return typeof target === 'string' || target instanceof StringContainer;
 }
 
 function isObject(target) {
@@ -502,7 +502,57 @@ SteppingNode.prototype.evaluateString = function (code) {
     return result;
 };
 
+// StringContainer /////////////////////////////////////////////////////////
 
+// I am a single line of text
+
+// StringContainer inherits from SteppingNode:
+
+StringContainer.prototype = new SteppingNode();
+StringContainer.prototype.constructor = StringContainer;
+StringContainer.uber = SteppingNode.prototype;
+
+// StringContainer instance creation:
+
+function StringContainer(
+    text,
+    isNumeric
+) {
+    this.init(
+        text,
+        isNumeric
+    );
+}
+
+StringContainer.prototype.init = function (
+    text,
+    isNumeric
+) {
+    // additional properties:
+    this.text = text || ((text === '') ? '' : 'StringContainer');
+    this.isNumeric = isNumeric || false;
+    this.isPassword = false;
+
+    // initialize inherited properties:
+    StringContainer.uber.init.call(this);
+};
+
+StringContainer.prototype.toString = function () {
+    // e.g. 'a StringContainer("Hello World")'
+    return 'a ' +
+        (this.constructor.name ||
+            this.constructor.toString().split(' ')[1].split('(')[0]) +
+        '("' + this.text.slice(0, 30) + '...")';
+};
+
+StringContainer.prototype.password = function (letter, length) {
+    var ans = '',
+        i;
+    for (i = 0; i < length; i += 1) {
+        ans += letter;
+    }
+    return ans;
+};
 
 // coming from file(s)
 // blocks.js
@@ -1001,7 +1051,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
             nop();
         }
     } else {
-      	part = spec;
+        part = new StringContainer(spec);
     }
     return part;
 };
@@ -1150,7 +1200,7 @@ Block.prototype.buildSpec = function () {
     var myself = this;
     this.blockSpec = '';
     this.parts().forEach(function (part) {
-        if (typeof(part) == 'string') {
+        if (part instanceof StringContainer) {
             myself.blockSpec += part.text;
         } else if (part instanceof Argument) {
             myself.blockSpec += part.getSpec();
@@ -1728,7 +1778,7 @@ InputSlot.prototype.init = function (
     choiceDict,
     isReadOnly
 ) {
-    var contents = '';
+    var contents = new StringContainer('');
 
     this.isUnevaluated = false;
     this.choices = choiceDict || null; // object, function or selector
@@ -1754,7 +1804,7 @@ InputSlot.prototype.contents = function () {
     return detect(
         this.children,
         function (child) {
-            return (typeof(child) == 'string');
+            return (child instanceof StringContainer);
         }
     );
 };
@@ -1766,19 +1816,17 @@ InputSlot.prototype.setContents = function (aStringOrFloat) {
     if (isConstant) {
         dta = localize(dta[0]);
     } else { // assume dta is a localizable choice if it's a key in my choices
-        if ((this.choices) && this.choices[dta] instanceof Array) {
+        if (this.choices !== null && this.choices[dta] instanceof Array) {
             return this.setContents(this.choices[dta]);
         }
     }
-    if (cnts) { 
-		cnts.text = dta;
-    	if (isNil(dta)) {
-   	    	cnts.text = '';
-    	} else if (dta.toString) {
-        	cnts.text = dta.toString();
-    	}
-	}
-	
+    cnts.text = dta;
+    if (isNil(dta)) {
+        cnts.text = '';
+    } else if (dta.toString) {
+        cnts.text = dta.toString();
+    }
+
     // remember the constant, if any
     this.constant = isConstant ? aStringOrFloat : null;
 };
@@ -1844,21 +1892,6 @@ InputSlot.prototype.setChoices = function (dict, readonly) {
     it's not part of Snap's evaluator and not needed for Snap itself
 */
 
-InputSlot.prototype.mapToCode = function () {
-    // private - open a dialog box letting the user map code via the GUI
-    new DialogBoxMorph(
-        this,
-        function (code) {
-            Stage.prototype.codeMappings.string = code;
-        },
-        this
-    ).promptCode(
-        'Code mapping - String <#1>',
-        Stage.prototype.codeMappings.string || '',
-        this.world()
-    );
-};
-
 InputSlot.prototype.mappedCode = function () {
     var code = Stage.prototype.codeMappings.string || '<#1>',
         block = this.parentThatIsA(Block),
@@ -1896,7 +1929,7 @@ InputSlot.prototype.evaluate = function () {
             return num;
         }
     }
-    return contents.text;
+    if (contents) { return contents.text };
 };
 
 InputSlot.prototype.isEmptySlot = function () {
@@ -2466,7 +2499,7 @@ ThreadManager.prototype.step = function () {
     processes that have been terminated
 */
     this.processes.forEach(function (proc) {
-        if (!proc.homeContext.receiver.isPickedUp() && !proc.isDead) {
+        if (!proc.isDead) {
             proc.runStep();
         }
     });
@@ -2553,6 +2586,7 @@ Process.prototype.runStep = function () {
     of several contexts, even of several blocks
 */
     if (this.isPaused) { // allow pausing in between atomic steps:
+		console.log('a');
         return this.pauseStep();
     }
     this.readyToYield = false;
@@ -2569,34 +2603,17 @@ Process.prototype.runStep = function () {
     }
     this.lastYield = Date.now();
 
-    // make sure to redraw atomic things
-    if (this.isAtomic &&
-            this.homeContext.receiver &&
-            this.homeContext.receiver.endWarp) {
-        this.homeContext.receiver.endWarp();
-        this.homeContext.receiver.startWarp();
-    }
-
     if (this.readyToTerminate) {
         while (this.context) {
             this.popContext();
         }
-        if (this.homeContext.receiver) {
-            if (this.homeContext.receiver.endWarp) {
-                // pen optimization
-                this.homeContext.receiver.endWarp();
-            }
-        }
-    }
+	}
 };
 
 Process.prototype.stop = function () {
     this.readyToYield = true;
     this.readyToTerminate = true;
     this.errorFlag = false;
-    if (this.context) {
-        this.context.stopMusic();
-    }
 };
 
 Process.prototype.pause = function () {
@@ -2627,19 +2644,19 @@ Process.prototype.evaluateContext = function () {
     if (exp instanceof Array) {
         return this.evaluateSequence(exp);
     }
-    if (exp instanceof MultiArgMorph) {
+    if (exp instanceof MultiArgument) {
         return this.evaluateMultiSlot(exp, exp.inputs().length);
     }
     if (exp instanceof ArgumentLabel) {
         return this.evaluateArgLabel(exp);
     }
-    if (exp instanceof ArgMorph || exp.bindingID) {
+    if (exp instanceof Argument || exp.bindingID) {
         return this.evaluateInput(exp);
     }
     if (exp instanceof Block) {
         return this.evaluateBlock(exp, exp.inputs().length);
     }
-    if (isString(exp)) {
+    if (exp instanceof StringContainer) {
         return this[exp]();
     }
     this.popContext(); // default: just ignore it
@@ -2870,7 +2887,7 @@ Process.prototype.reify = function (topBlock, parameterNames, isCustomBlock) {
             // mark all empty slots with an identifier
             context.expression.allEmptySlots().forEach(function (slot) {
                 i += 1;
-                if (slot instanceof MultiArgMorph) {
+                if (slot instanceof MultiArgument) {
                     slot.bindingID = ['arguments'];
                 } else {
                     slot.bindingID = i;
@@ -3419,34 +3436,6 @@ Process.prototype.doStopWarping = function () {
         stage = this.homeContext.receiver.parentThatIsA(Stage);
         if (stage) {
             stage.fps = stage.frameRate; //  back to fixed frame rate
-        }
-    }
-};
-
-Process.prototype.reportIsFastTracking = function () {
-    var ide;
-    if (this.homeContext.receiver) {
-        ide = this.homeContext.receiver.parentThatIsA(IDE_Morph);
-        if (ide) {
-            return ide.stage.isFastTracked;
-        }
-    }
-    return false;
-};
-
-Process.prototype.doSetFastTracking = function (bool) {
-    var ide;
-    if (!this.reportIsA(bool, 'Boolean')) {
-        return;
-    }
-    if (this.homeContext.receiver) {
-        ide = this.homeContext.receiver.parentThatIsA(IDE_Morph);
-        if (ide) {
-            if (ide.stage.isFastTracked) {
-                ide.stopFastTracking();
-            } else {
-                ide.startFastTracking();
-            }
         }
     }
 };
@@ -4216,9 +4205,6 @@ Process.prototype.pushContext = function (expression, outerContext) {
 };
 
 Process.prototype.popContext = function () {
-    if (this.context) {
-        this.context.stopMusic();
-    }
     this.context = this.context ? this.context.parentContext : null;
 };
 
@@ -4830,17 +4816,7 @@ Sprite.prototype.initBlocks = function () {
             spec: 'http:// %s',
             defaults: ['snap.berkeley.edu']
         },
-        reportIsFastTracking: {
-            type: 'predicate',
-            category: 'sensing',
-            spec: 'turbo mode?'
-        },
-        doSetFastTracking: {
-            type: 'command',
-            category: 'sensing',
-            spec: 'set turbo mode to %b'
-        },
-        reportDate: {
+		reportDate: {
             type: 'reporter',
             category: 'sensing',
             spec: 'current %dates'
@@ -5202,7 +5178,7 @@ Sprite.prototype.blockForSelector = function (selector, setDefaults) {
         defaults = migration ? migration.inputs : info.defaults;
         block.defaults = defaults;
         inputs = block.inputs();
-        if (inputs[0] instanceof MultiArgMorph) {
+        if (inputs[0] instanceof MultiArgument) {
             inputs[0].setContents(defaults);
             inputs[0].defaults = defaults;
         } else {
@@ -5382,7 +5358,6 @@ Stage.prototype.init = function (globals) {
     this.customBlocks = [];
     this.globalBlocks = [];
     this.version = Date.now(); // for observers
-    this.isFastTracked = false;
     this.cloneCount = 0;
 
     this.timerStart = Date.now();
@@ -5418,8 +5393,7 @@ Stage.prototype.getLastMessage = function () {
 // Stage stepping
 
 Stage.prototype.step = function () {
-    var current, elapsed, leftover, world = this.world();
-
+    var current, elapsed, leftover; 
     // manage threads
     if (this.isFastTracked && this.threads.processes.length) {
         this.children.forEach(function (morph) {
@@ -5443,35 +5417,31 @@ Stage.prototype.step = function () {
     } else {
         this.threads.step();
     }
+};
 
-    // update watchers
-    current = Date.now();
-    elapsed = current - this.lastWatcherUpdate;
-    leftover = (1000 / this.watcherUpdateFrequency) - elapsed;
-    if (leftover < 1) {
-        this.watchers().forEach(function (w) {
-            w.update();
-        });
-        this.lastWatcherUpdate = Date.now();
-    }
+Stage.prototype.fireGreenFlagEvent = function () {
+    var procs = [],
+        hats = [],
+        myself = this;
+
+    this.children.concat(this).forEach(function (morph) {
+        if (morph instanceof Sprite || morph instanceof Stage) {
+            hats = hats.concat(morph.allHatBlocksFor('__shout__go__'));
+        }
+    });
+    hats.forEach(function (block) {
+        procs.push(myself.threads.startProcess(
+            block,
+            myself.isThreadSafe
+        ));
+    });
+	return procs;
 };
 
 Stage.prototype.fireStopAllEvent = function () {
-    var ide = this.parentThatIsA(IDE_Morph);
     this.threads.resumeAll(this.stage);
     this.threads.stopAll();
-    this.children.forEach(function (morph) {
-        if (morph.stopTalking) {
-            morph.stopTalking();
-        }
-    });
     this.removeAllClones();
-    if (ide) {
-        ide.nextSteps([
-            nop,
-            function () {ide.controlBar.pauseButton.refresh(); }
-        ]);
-    }
 };
 
 Stage.prototype.removeAllClones = function () {
@@ -6351,12 +6321,10 @@ SnapSerializer.prototype.loadInput = function (model, input, block) {
                 input
             );
         });
-    } else if (model.tag === 'color') {
-        input.setColor(this.loadColor(model.contents));
     } else {
         val = this.loadValue(model);
         if (val) {
-            input.setContents(this.loadValue(model));
+            input.setContents(val);
         }
     }
 };
@@ -6492,36 +6460,6 @@ SnapSerializer.prototype.loadValue = function (model) {
     return undefined;
 };
 
-SnapSerializer.prototype.openProject = function (project, ide) {
-    var stage = ide.stage,
-        sprites = [],
-        sprite;
-    if (!project || !project.stage) {
-        return;
-    }
-    ide.projectName = project.name;
-    ide.projectNotes = project.notes || '';
-    if (ide.globalVariables) {
-        ide.globalVariables = project.globalVariables;
-    }
-    if (stage) {
-        stage.destroy();
-    }
-    ide.add(project.stage);
-    ide.stage = project.stage;
-    sprites = ide.stage.children.filter(function (child) {
-        return child instanceof Sprite;
-    });
-    sprites.sort(function (x, y) {
-        return x.idx - y.idx;
-    });
-
-    ide.sprites = new List(sprites);
-    sprite = sprites[0] || project.stage;
-
-};
-
-
 // not coming from any Snap! original files
 
 // SnapReader ////////////////////////////////////////////////////
@@ -6533,8 +6471,18 @@ var serializer = new SnapSerializer();
 
 fs.readFile(process.argv[2], {encoding: 'utf-8'}, function(err, data) {
 		var project;
+		var started = false;
         if (err) throw err;
         project = serializer.load(data);
-		console.log(project.sprites.Sprite.scripts.children);
-});
+		project.stage.fireGreenFlagEvent();
+		project.stage.threads.step();
+		
 
+		/*	function loop() {
+		project.stage.stepFrame();
+			//
+		};
+		
+		//setInterval(loop, 1); 
+		*/
+});
