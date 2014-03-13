@@ -3588,14 +3588,10 @@ Process.prototype.doWait = function (secs) {
 
 Process.prototype.doSayFor = function (data, secs) {
 	this.blockReceiver().bubble(data);
-	this.pushContext('doYield');
-    this.pushContext();
 };
 
 Process.prototype.doThinkFor = function (data, secs) {
     this.blockReceiver().doThink(data);
-    this.pushContext('doYield');
-    this.pushContext();
 };
 
 Process.prototype.blockReceiver = function () {
@@ -6475,14 +6471,8 @@ fs.readFile(process.argv[2], {encoding: 'utf-8'}, function(err, data) {
         if (err) throw err;
         project = serializer.load(data);
 		project.stage.fireGreenFlagEvent();
-		project.stage.threads.step();
-		
 
-		/*	function loop() {
-		project.stage.stepFrame();
-			//
-		};
-		
-		//setInterval(loop, 1); 
-		*/
+		while(project.stage.threads.processes.length > 0) {
+			project.stage.stepFrame();
+		}
 });
