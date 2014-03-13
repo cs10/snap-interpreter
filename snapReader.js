@@ -636,6 +636,28 @@ SyntaxElement.prototype.allInputs = function () {
     );
 };
 
+SyntaxElement.prototype.silentReplaceInput = function (oldArg, newArg) {
+    // used by the Serializer or when programatically
+    // changing blocks
+    var i = this.children.indexOf(oldArg),
+        replacement;
+
+    if (i === -1) {
+        return;
+    }
+
+    if (newArg.parent) {
+        newArg.parent.removeChild(newArg);
+    }
+    if (oldArg instanceof MultiArgument && this.dynamicInputLabels) {
+        replacement = new ArgumentLabel(newArg);
+    } else {
+        replacement = newArg;
+    }
+    replacement.parent = this;
+    this.children[i] = replacement;
+};
+
 SyntaxElement.prototype.isLocked = function () {
     // answer true if I can be exchanged by a dropped reporter
     return this.isStatic;
@@ -1532,11 +1554,7 @@ ReporterBlock.prototype.getSlotSpec = function () {
     // answer the spec of the slot I'm in, if any
     var parts, idx;
     if (this.parent instanceof Block) {
-        parts = this.parent.parts().filter(
-            function (part) {
-                return !(part instanceof BlockHighlightMorph);
-            }
-        );
+        parts = this.parent.parts();
         idx = parts.indexOf(this);
         if (idx !== -1) {
             if (this.parent.blockSpec) {
@@ -1901,7 +1919,7 @@ InputSlot.prototype.mappedCode = function () {
     if (!isNaN(parseFloat(val))) {return val; }
     if (!isString(val)) {return val; }
     if (block && contains(
-            ['doSetVar', 'doChangeVar', 'doShowVar', 'doHideVar'],
+            ['doSetVar', 'doChangeVar'],
             block.selector
         )) {
         return val;
@@ -5188,6 +5206,14 @@ Sprite.prototype.blockForSelector = function (selector, setDefaults) {
     return block;
 };
 
+Sprite.prototype.variableBlock = function (varName) {
+    var block = new ReporterBlock(false);
+    block.selector = 'reportGetVar';
+    block.category = 'variables';
+    block.setSpec(varName);
+    return block;
+};
+
 // Sprite variable management
 
 Sprite.prototype.addVariable = function (name, isGlobal) {
@@ -6058,17 +6084,6 @@ SnapSerializer.prototype.loadProjectModel = function (xmlNode) {
     Stage.prototype.enableCodeMapping =
         model.stage.attributes.codify === 'true';
 
-    model.hiddenPrimitives = model.project.childNamed('hidden');
-    if (model.hiddenPrimitives) {
-        model.hiddenPrimitives.contents.split(' ').forEach(
-            function (sel) {
-                if (sel) {
-                    Stage.prototype.hiddenPrimitives[sel] = true;
-                }
-            }
-        );
-    }
-
     model.codeHeaders = model.project.childNamed('headers');
     if (model.codeHeaders) {
         model.codeHeaders.children.forEach(function (xml) {
@@ -6317,11 +6332,11 @@ SnapSerializer.prototype.loadInput = function (model, input, block) {
                 input
             );
         });
+    } else if (model.tag === 'block') {
+        block.silentReplaceInput(input, this.loadBlock(model, true));
     } else {
         val = this.loadValue(model);
-        if (val) {
-            input.setContents(val);
-        }
+        if (val) { input.setContents(val) }
     }
 };
 
