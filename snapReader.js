@@ -1,3 +1,5 @@
+var http = require('http');
+
 // coming from file(s)
 // morphic.js
 // threads.js
@@ -3621,15 +3623,28 @@ Process.prototype.blockReceiver = function () {
 
 Process.prototype.reportURL = function (url) {
     var response;
+
     if (!this.httpRequest) {
-        this.httpRequest = new XMLHttpRequest();
-        this.httpRequest.open("GET", 'http://' + url, true);
-        this.httpRequest.send(null);
-    } else if (this.httpRequest.readyState === 4) {
-        response = this.httpRequest.responseText;
+        this.httpRequest = http.get('http://' + url, function(res) {
+			var data = '';
+			res.on('data', function (chunk) {
+				data += chunk;
+			});
+			
+			res.on('end', function() {
+				response = data;
+			})
+
+		}).on('error', function(e) {
+  			console.log("HTTP error: " + e.message);
+		});
+    } 
+	
+	if (response) {
         this.httpRequest = null;
         return response;
     }
+
     this.pushContext('doYield');
     this.pushContext();
 };
@@ -3658,7 +3673,13 @@ Process.prototype.doBroadcast = function (message) {
 Process.prototype.doBroadcastAndWait = function (message) {
     if (!this.context.activeSends) {
         this.context.activeSends = this.doBroadcast(message);
-    }
+    	this.context.activeSends.forEach(
+			function(proc) {
+				proc.runStep();
+			}
+		)
+	}
+ 
     this.context.activeSends = this.context.activeSends.filter(
         function (proc) {
             return proc.isRunning();
@@ -5271,8 +5292,10 @@ Sprite.prototype.doThink = function (data) {
 };
 
 Sprite.prototype.bubble = function (data, isThought, isQuestion) {
+	var text = this.name;
     if (data === '' || isNil(data)) {return; }
-	if (isThought) { console.log('thinking: ' + data) } else { console.log(data) }
+	if (isThought) { text += ' thinks: ' + data } else { text += ' says: ' + data }
+	console.log(text);
 };
 
 // Sprite message broadcasting
@@ -5597,6 +5620,224 @@ ReadStream.prototype.word = function () {
     start = this.index;
     this.index += i;
     return this.contents.substring(start, this.index);
+};
+
+
+// coming from file(s)
+// lists.js
+
+var List;
+
+// List instance creation:
+
+function List(array) {
+    this.contents = array || [];
+    this.first = null;
+    this.rest = null;
+    this.isLinked = false;
+    this.lastChanged = Date.now();
+}
+
+List.prototype.toString = function () {
+    return 'a List [' + this.asArray + ']';
+};
+
+// List updating:
+
+List.prototype.changed = function () {
+    this.lastChanged = Date.now();
+};
+
+// Linked List ops:
+
+List.prototype.cons = function (car, cdr) {
+    var answer = new List();
+    answer.first = isNil(car) ? null : car;
+    answer.rest = cdr || null;
+    answer.isLinked = true;
+    return answer;
+};
+
+List.prototype.cdr = function () {
+    function helper(i) {
+        if (i > this.contents.length) {
+            return new List();
+        }
+        return this.cons(this.at(i), helper.call(this, i + 1));
+    }
+    if (this.isLinked) {
+        return this.rest || new List();
+    }
+    if (this.contents.length < 2) {
+        return new List();
+    }
+    return helper.call(this, 2);
+};
+
+// List array setters:
+
+List.prototype.add = function (element, index) {
+/*
+    insert the element before the given slot index,
+    if no index is specifed, append the element
+*/
+    var idx = index || this.length() + 1,
+        obj = element === 0 ? 0
+                : element === false ? false
+                        : element || null;
+    this.becomeArray();
+    this.contents.splice(idx - 1, 0, obj);
+    this.changed();
+};
+
+List.prototype.put = function (element, index) {
+    // exchange the element at the given slot for another
+    var data = element === 0 ? 0
+            : element === false ? false
+                    : element || null;
+
+    this.becomeArray();
+    this.contents[index - 1] = data;
+    this.changed();
+};
+
+List.prototype.remove = function (index) {
+    // remove the given slot, shortening the list
+    this.becomeArray();
+    this.contents.splice(index - 1, 1);
+    this.changed();
+};
+
+List.prototype.clear = function () {
+    this.contents = [];
+    this.first = null;
+    this.rest = null;
+    this.isLinked = false;
+    this.changed();
+};
+
+// List getters (all hybrid):
+
+List.prototype.length = function () {
+    if (this.isLinked) {
+        return (this.first === undefined ? 0 : 1)
+            + (this.rest ? this.rest.length() : 0);
+    }
+    return this.contents.length;
+};
+
+List.prototype.at = function (index) {
+    var value, idx = +index;
+    if (this.isLinked) {
+        return idx === 1 ? this.first : this.rest.at(idx - 1);
+    }
+    value = this.contents[idx - 1];
+    return isNil(value) ? '' : value;
+};
+
+List.prototype.contains = function (element) {
+    if (this.isLinked) {
+        if (snapEquals(this.first, element)) {
+            return true;
+        }
+        if (this.rest instanceof List) {
+            return this.rest.contains(element);
+        }
+    }
+    // in case I'm arrayed
+    return this.contents.some(function (any) {
+        return snapEquals(any, element);
+    });
+};
+
+// List conversion:
+
+List.prototype.asArray = function () {
+    // for use in the evaluator
+    this.becomeArray();
+    return this.contents;
+};
+
+List.prototype.asText = function () {
+    var result = '',
+        length = this.length(),
+        element,
+        i;
+    for (i = 1; i <= length; i += 1) {
+        element = this.at(i);
+        if (element instanceof List) {
+            result = result.concat(element.asText());
+        } else {
+            element = isNil(element) ? '' : element.toString();
+            result = result.concat(element);
+        }
+    }
+    return result;
+};
+
+List.prototype.becomeArray = function () {
+    if (this.isLinked) {
+        var next = this;
+        this.contents = [];
+        while (next instanceof List && (next.length() > 0)) {
+            this.contents.push(next.at(1));
+            next = next.cdr();
+        }
+        this.isLinked = false;
+    }
+};
+
+List.prototype.becomeLinked = function () {
+    var i, stop, tail = this;
+    if (!this.isLinked) {
+        stop = this.length();
+        for (i = 0; i < stop; i += 1) {
+            tail.first = this.contents[i];
+            tail.rest = new List();
+            tail.isLinked = true;
+            tail = tail.rest;
+        }
+        this.contents = [];
+        this.isLinked = true;
+    }
+};
+
+// List testing
+
+List.prototype.equalTo = function (other) {
+    var i;
+    if (!(other instanceof List)) {
+        return false;
+    }
+    if ((!this.isLinked) && (!other.isLinked)) {
+        if (this.length() === 0 && (other.length() === 0)) {
+            return true;
+        }
+        if (this.length() !== other.length()) {
+            return false;
+        }
+        for (i = 0; i < this.length(); i += 1) {
+            if (!snapEquals(this.contents[i], other.contents[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if ((this.isLinked) && (other.isLinked)) {
+        if (snapEquals(this.at(1), other.at(1))) {
+            return this.cdr().equalTo(other.cdr());
+        }
+        return false;
+    }
+    if (this.length() !== other.length()) {
+        return false;
+    }
+    for (i = 0; i < this.length(); i += 1) {
+        if (!snapEquals(this.at(i), other.at(i))) {
+            return false;
+        }
+    }
+    return true;
 };
 
 
@@ -6336,7 +6577,7 @@ SnapSerializer.prototype.loadInput = function (model, input, block) {
         block.silentReplaceInput(input, this.loadBlock(model, true));
     } else {
         val = this.loadValue(model);
-        if (val) { input.setContents(val) }
+        if (val && input) { input.setContents(val) }
     }
 };
 
@@ -6488,6 +6729,6 @@ fs.readFile(process.argv[2], {encoding: 'utf-8'}, function(err, data) {
 		project.stage.fireGreenFlagEvent();
 
 		while(project.stage.threads.processes.length > 0) {
-			project.stage.stepFrame();
+			project.stage.step();
 		}
 });
