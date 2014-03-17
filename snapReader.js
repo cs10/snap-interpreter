@@ -2887,7 +2887,7 @@ Process.prototype.doYield = function () {
 Process.prototype.handleError = function (error, element) {
     this.stop();
     this.errorFlag = true;
-	console.log('Error: ' + error + '\nProcess: ' + this + '\nElement:');
+	console.log('Error: ' + error + '\nProcess: ' + this + '\nElement: ' + element);
 };
 
 // Process Lambda primitives
@@ -3622,31 +3622,11 @@ Process.prototype.blockReceiver = function () {
 // Process URI retrieval (interpolated)
 
 Process.prototype.reportURL = function (url) {
-    var response;
 
-    if (!this.httpRequest) {
-        this.httpRequest = http.get('http://' + url, function(res) {
-			var data = '';
-			res.on('data', function (chunk) {
-				data += chunk;
-			});
-			
-			res.on('end', function() {
-				response = data;
-			})
 
-		}).on('error', function(e) {
-  			console.log("HTTP error: " + e.message);
-		});
-    } 
-	
-	if (response) {
-        this.httpRequest = null;
-        return response;
-    }
-
-    this.pushContext('doYield');
+	this.pushContext('doYield');
     this.pushContext();
+
 };
 
 // Process event messages primitives
