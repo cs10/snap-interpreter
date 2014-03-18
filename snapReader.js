@@ -3625,17 +3625,17 @@ Process.prototype.reportURL = function (url) {
         this.httpRequest = true;
         this.httpRequestDone = false;
         this.responseText = '';
-        var self = this;
+        var myself = this;
         http.get('http://' + url, function(res) {
             res.setEncoding('utf8');
             res.on('data', function(chunk) {
-                self.responseText += chunk;
+                myself.responseText += chunk;
             });
             res.on('end', function() {
-                self.httpRequestDone = true;
+                myself.httpRequestDone = true;
             });
         }).on('error', function(err) {
-            self.httpRequestDone = true;
+            myself.httpRequestDone = true;
         });
     } else if (this.httpRequestDone) {
         var response = this.responseText;
