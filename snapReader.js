@@ -365,13 +365,13 @@ SteppingNode.prototype.step = function () {
 
 
 SteppingNode.prototype.add = function (aSteppingNode) {
-	if(aSteppingNode) {
-    	var owner = aSteppingNode.parent;
-    	if (owner) {
-        	owner.removeChild(aSteppingNode);
-    	}
-   		this.addChild(aSteppingNode);
-	}
+    if(aSteppingNode) {
+        var owner = aSteppingNode.parent;
+        if (owner) {
+            owner.removeChild(aSteppingNode);
+        }
+        this.addChild(aSteppingNode);
+    }
 };
 
 SteppingNode.prototype.addBack = function (aSteppingNode) {
@@ -499,7 +499,7 @@ SteppingNode.prototype.evaluateString = function (code) {
     try {
         result = eval(code);
     } catch (err) {
-		console.log(err)
+        console.log(err)
     }
     return result;
 };
@@ -740,7 +740,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
             part.isStatic = true;
             part.canBeEmpty = false;
             break;
-		case '%inputName':
+        case '%inputName':
             part = new ReporterBlock();
             part.category = 'variables';
             part.setSpec(localize('Input name'));
@@ -1029,7 +1029,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
         case '%cs':
             part = new CSlot(); // non-static
             break;
-		case '%t':
+        case '%t':
             part = new TemplateSlot('a');
             break;
         case '%upvar':
@@ -1206,7 +1206,7 @@ Block.prototype.setSpec = function (spec) {
         }
         part = myself.labelPart(word);
         myself.add(part);
-		if (myself.isPrototype) {
+        if (myself.isPrototype) {
             myself.add(myself.placeHolder());
         }
         if (part instanceof InputSlot && myself.definition) {
@@ -1382,7 +1382,7 @@ Block.prototype.codeDefinitionHeader = function () {
     block.isPrototype = true;
     hat.setCategory("control");
     hat.setSpec('%s');
-	return hat;
+    return hat;
 };
 
 Block.prototype.codeMappingHeader = function () {
@@ -1412,7 +1412,7 @@ Block.prototype.fullCopy = function () {
     if (this.instantiationSpec) {
         ans.setSpec(this.instantiationSpec);
     }
-	return ans;
+    return ans;
 };
 
 // CommandBlock ///////////////////////////////////////////////////
@@ -2533,7 +2533,7 @@ ThreadManager.prototype.removeTerminatedProcesses = function () {
         if (!proc.isRunning() && !proc.errorFlag && !proc.isDead) {
             if (proc.topBlock instanceof ReporterBlock) {
                 if (proc.homeContext.inputs[0] instanceof List) {
-					nop();
+                    nop();
                 } else {
                     proc.topBlock.showBubble(proc.homeContext.inputs[0]);
                 }
@@ -2606,7 +2606,6 @@ Process.prototype.runStep = function () {
     of several contexts, even of several blocks
 */
     if (this.isPaused) { // allow pausing in between atomic steps:
-		console.log('a');
         return this.pauseStep();
     }
     this.readyToYield = false;
@@ -2627,7 +2626,7 @@ Process.prototype.runStep = function () {
         while (this.context) {
             this.popContext();
         }
-	}
+    }
 };
 
 Process.prototype.stop = function () {
@@ -2676,7 +2675,7 @@ Process.prototype.evaluateContext = function () {
     if (exp instanceof Block) {
         return this.evaluateBlock(exp, exp.inputs().length);
     }
-    if (exp instanceof StringContainer) {
+    if (isString(exp)) {
         return this[exp]();
     }
     this.popContext(); // default: just ignore it
@@ -2887,7 +2886,7 @@ Process.prototype.doYield = function () {
 Process.prototype.handleError = function (error, element) {
     this.stop();
     this.errorFlag = true;
-	console.log('Error: ' + error + '\nProcess: ' + this + '\nElement: ' + element);
+    console.log('Error: ' + error + '\nProcess: ' + this + '\nElement: ' + element);
 };
 
 // Process Lambda primitives
@@ -3314,7 +3313,7 @@ Process.prototype.doIf = function () {
             this.pushContext(args[1].blockSequence(), outer);
             this.context.isLambda = isLambda;
             this.context.isImplicitLambda = isImplicitLambda;
-        	this.context.isCustomBlock = isCustomBlock;
+            this.context.isCustomBlock = isCustomBlock;
             this.context.upvars = new UpvarReference(upvars);
         }
     }
@@ -3364,7 +3363,7 @@ Process.prototype.doStopAll = function () {
         if (stage) {
             stage.threads.resumeAll(stage);
             stage.threads.stopAll();
-			stage.removeAllClones();
+            stage.removeAllClones();
         }
     }
 };
@@ -3467,7 +3466,7 @@ Process.prototype.doPauseAll = function () {
         if (stage) {
             stage.threads.pauseAll(stage);
         }
-	}
+    }
 };
 
 // Process loop primitives
@@ -3607,7 +3606,7 @@ Process.prototype.doWait = function (secs) {
 };
 
 Process.prototype.doSayFor = function (data, secs) {
-	this.blockReceiver().bubble(data);
+    this.blockReceiver().bubble(data);
 };
 
 Process.prototype.doThinkFor = function (data, secs) {
@@ -3622,11 +3621,31 @@ Process.prototype.blockReceiver = function () {
 // Process URI retrieval (interpolated)
 
 Process.prototype.reportURL = function (url) {
-
-
-	this.pushContext('doYield');
+    if (!this.httpRequest) {
+        this.httpRequest = true;
+        this.httpRequestDone = false;
+        this.responseText = '';
+        var self = this;
+        http.get('http://' + url, function(res) {
+            res.setEncoding('utf8');
+            res.on('data', function(chunk) {
+                self.responseText += chunk;
+            });
+            res.on('end', function() {
+                self.httpRequestDone = true;
+            });
+        }).on('error', function(err) {
+            self.httpRequestDone = true;
+        });
+    } else if (this.httpRequestDone) {
+        var response = this.responseText;
+        this.httpRequest = undefined;
+        this.httpRequestDone = undefined;
+        this.responseText = undefined;
+        return response;
+    }
+    this.pushContext('doYield');
     this.pushContext();
-
 };
 
 // Process event messages primitives
@@ -3653,13 +3672,13 @@ Process.prototype.doBroadcast = function (message) {
 Process.prototype.doBroadcastAndWait = function (message) {
     if (!this.context.activeSends) {
         this.context.activeSends = this.doBroadcast(message);
-    	this.context.activeSends.forEach(
-			function(proc) {
-				proc.runStep();
-			}
-		)
-	}
- 
+        this.context.activeSends.forEach(
+            function(proc) {
+                proc.runStep();
+            }
+        )
+    }
+
     this.context.activeSends = this.context.activeSends.filter(
         function (proc) {
             return proc.isRunning();
@@ -4831,7 +4850,7 @@ Sprite.prototype.initBlocks = function () {
             spec: 'http:// %s',
             defaults: ['snap.berkeley.edu']
         },
-		reportDate: {
+        reportDate: {
             type: 'reporter',
             category: 'sensing',
             spec: 'current %dates'
@@ -5135,7 +5154,7 @@ Sprite.prototype.init = function (globals) {
     this.name = localize('Sprite');
     this.variables = new VariableFrame(globals || null, this);
     this.scripts = new SteppingNode();
-	this.scripts.owner = this;
+    this.scripts.owner = this;
     this.version = Date.now(); // for observer optimization
     this.isClone = false; // indicate a "temporary" Scratch-style clone
     this.cloneOriginName = '';
@@ -5264,7 +5283,7 @@ Sprite.prototype.removeClone = function () {
 // Sprite talk
 
 Sprite.prototype.stopTalking = function () {
-	nop()
+    nop()
 };
 
 Sprite.prototype.doThink = function (data) {
@@ -5272,10 +5291,10 @@ Sprite.prototype.doThink = function (data) {
 };
 
 Sprite.prototype.bubble = function (data, isThought, isQuestion) {
-	var text = this.name;
+    var text = this.name;
     if (data === '' || isNil(data)) {return; }
-	if (isThought) { text += ' thinks: ' + data } else { text += ' says: ' + data }
-	console.log(text);
+    if (isThought) { text += ' thinks: ' + data } else { text += ' says: ' + data }
+    console.log(text);
 };
 
 // Sprite message broadcasting
@@ -5379,7 +5398,7 @@ Stage.prototype.init = function (globals) {
     this.threads = new ThreadManager();
     this.variables = new VariableFrame(globals || null, this);
     this.scripts = new SteppingNode();
-	this.scripts.owner = this;
+    this.scripts.owner = this;
     this.customBlocks = [];
     this.globalBlocks = [];
     this.version = Date.now(); // for observers
@@ -5418,7 +5437,7 @@ Stage.prototype.getLastMessage = function () {
 // Stage stepping
 
 Stage.prototype.step = function () {
-    var current, elapsed, leftover; 
+    var current, elapsed, leftover;
     // manage threads
     if (this.isFastTracked && this.threads.processes.length) {
         this.children.forEach(function (morph) {
@@ -5460,7 +5479,7 @@ Stage.prototype.fireGreenFlagEvent = function () {
             myself.isThreadSafe
         ));
     });
-	return procs;
+    return procs;
 };
 
 Stage.prototype.fireStopAllEvent = function () {
@@ -6320,7 +6339,7 @@ SnapSerializer.prototype.loadProjectModel = function (xmlNode) {
     }
 
     model.globalBlocks = model.project.childNamed('blocks');
-	this.loadObject(project.stage, model.stage);
+    this.loadObject(project.stage, model.stage);
 
     /* Sprites */
 
@@ -6443,7 +6462,7 @@ SnapSerializer.prototype.loadScripts = function (scripts, model) {
             if (!element) {
                 return;
             }
-			scripts.add(element);
+            scripts.add(element);
         }
     });
 };
@@ -6464,7 +6483,7 @@ SnapSerializer.prototype.loadScriptsArray = function (model) {
             if (!element) {
                 return;
             }
-			scripts.push(element);
+            scripts.push(element);
         }
     });
     return scripts;
@@ -6502,7 +6521,7 @@ SnapSerializer.prototype.loadBlock = function (model, isReporter) {
             );
         }
         block = Sprite.prototype.blockForSelector(model.attributes.s);
-    } 
+    }
     if (block === null) {
         block = this.obsoleteBlock(isReporter);
     }
@@ -6645,7 +6664,7 @@ SnapSerializer.prototype.loadValue = function (model) {
             v.idx = +model.attributes.idx;
         }
         myself.project.stage.add(v);
-		myself.loadObject(v, model);
+        myself.loadObject(v, model);
         return v;
     case 'context':
         v = new Context(null);
@@ -6701,14 +6720,15 @@ SnapSerializer.prototype.loadValue = function (model) {
 var fs = require('fs');
 var serializer = new SnapSerializer();
 
-fs.readFile(process.argv[2], {encoding: 'utf-8'}, function(err, data) {
-		var project;
-		var started = false;
-        if (err) throw err;
-        project = serializer.load(data);
-		project.stage.fireGreenFlagEvent();
+fs.readFile(process.argv[2], {encoding: 'utf8'}, function(err, data) {
+    if (err) throw err;
 
-		while(project.stage.threads.processes.length > 0) {
-			project.stage.step();
-		}
+    var project = serializer.load(data);
+    project.stage.fireGreenFlagEvent();
+
+    (function tick() {
+        if (project.stage.threads.processes.length === 0) return;
+        project.stage.step();
+        setImmediate(tick);
+    })();
 });
