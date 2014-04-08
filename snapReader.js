@@ -742,7 +742,6 @@ SyntaxElement.prototype.labelPart = function (spec) {
             break;
         case '%inputName':
             part = new ReporterBlock();
-            part.category = 'variables';
             part.setSpec(localize('Input name'));
             break;
         case '%s':
@@ -1071,6 +1070,78 @@ SyntaxElement.prototype.labelPart = function (spec) {
                 true // read-only
             );
             break;
+
+		// Snap4Arduino
+
+		case '%arduinoType':
+			part = new InputSlot(
+				null,
+				false,
+				arduinoTypes,
+				true
+				);
+			part.setContents('ArduinoUNO');
+		break; 
+		case '%servoValue':
+			part = new InputSlot(
+				null,
+				false,
+				{
+					'angle (0-180)' : 90,
+					'stopped' : ['stopped'] , 
+					'clockwise' : ['clockwise'] ,
+				 	'counter-clockwise' : ['counter-clockwise']
+				}
+				);
+			part.setContents(['clockwise']);
+		break;
+		case '%pinMode':
+			part = new InputSlot(
+				null,
+				false,
+				{
+					'digital input' : ['digital input'],
+					'digital output' : ['digital output'] ,
+				 	'PWM' : ['PWM'] ,
+				 	'servo' : ['servo']
+				},
+				true
+				);
+			part.setContents(['servo']);
+		break;
+		case '%servoPin':
+			part = new InputSlot(
+				null,
+				true,
+				function() { return boardSpecs.servoPins },
+				true
+				);
+		break;
+		case '%pwmPin':
+			part = new InputSlot(
+				null,
+				true,
+				function() { return boardSpecs.pwmPins },
+				true
+				);
+		break;
+
+		case '%analogPin':
+			part = new InputSlot(
+				null,
+				true,
+				function() { return boardSpecs.analogPins },
+				true
+				);
+		break;
+		case '%digitalPin':
+			part = new InputSlot(
+				null,
+				true,
+				function() { return boardSpecs.digitalPins },
+				true
+				);
+		break;
         default:
             nop();
         }
@@ -1123,7 +1194,6 @@ Block.prototype.init = function () {
 
     // not to be persisted:
     this.instantiationSpec = null; // spec to set upon fullCopy() of template
-    this.category = null; // for zebra coloring (non persistent)
 
     Block.uber.init.call(this);
 };
@@ -1380,7 +1450,6 @@ Block.prototype.codeDefinitionHeader = function () {
         count += 1;
     });
     block.isPrototype = true;
-    hat.setCategory("control");
     hat.setSpec('%s');
     return hat;
 };
@@ -1399,10 +1468,6 @@ Block.prototype.codeMappingHeader = function () {
     hat.setCategory("control");
     hat.setSpec('%s');
     return hat;
-};
-
-Block.prototype.setCategory = function (aString) {
-    this.category = aString;
 };
 
 // Block copying
@@ -1589,7 +1654,6 @@ function Ring() {
 
 Ring.prototype.init = function () {
     Ring.uber.init.call(this);
-    this.category = 'other';
 };
 
 Ring.prototype.contents = function () {
@@ -1974,12 +2038,7 @@ TemplateSlot.prototype.init = function (name) {
     var template = new ReporterBlock();
     this.labelString = name || '';
     template.isTemplate = true;
-    if (modules.objects !== undefined) {
-        template.category = 'variables';
-    } else {
-        template.category = null;
-    }
-    template.setSpec(this.labelString);
+	template.setSpec(this.labelString);
     template.selector = 'reportGetVar';
     TemplateSlot.uber.init.call(this);
     this.add(template);
@@ -2158,43 +2217,6 @@ MultiArgument.prototype.setContents = function (anArray) {
     for (i = 0; i < anArray.length; i += 1) {
         if ((anArray[i]) && (inputs[i])) {
             inputs[i].setContents(anArray[i]);
-        }
-    }
-};
-
-// MultiArgument arity control:
-
-MultiArgument.prototype.addInput = function (contents) {
-    var i, name,
-        newPart = this.labelPart(this.slotSpec),
-        idx = this.children.length - 1;
-    if (contents) {
-        newPart.setContents(contents);
-    } else if (this.elementSpec === '%scriptVars') {
-        name = '';
-        i = idx;
-        while (i > 0) {
-            name = String.fromCharCode(97 + (i - 1) % 26) + name;
-            i = Math.floor((i - 1) / 26);
-        }
-        newPart.setContents(name);
-    } else if (contains(['%parms', '%ringparms'], this.elementSpec)) {
-        newPart.setContents('#' + idx);
-    }
-    newPart.parent = this;
-    this.children.splice(idx, 0, newPart);
-};
-
-MultiArgument.prototype.removeInput = function () {
-    var oldPart, scripts;
-    if (this.children.length > 1) {
-        oldPart = this.children[this.children.length - 2];
-        this.removeChild(oldPart);
-        if (oldPart instanceof Block) {
-            scripts = this.parentThatIsA(ScriptsMorph);
-            if (scripts) {
-                scripts.add(oldPart);
-            }
         }
     }
 };
@@ -2822,6 +2844,7 @@ Process.prototype.evaluateSequence = function (arr) {
         outer = this.context.outerContext,
         isLambda = this.context.isLambda,
         isImplicitLambda = this.context.isImplicitLambda,
+        isCustomBlock = this.context.isCustomBlock,
         upvars = this.context.upvars;
     if (pc === (arr.length - 1)) { // tail call elimination
         this.context = new Context(
@@ -2832,6 +2855,7 @@ Process.prototype.evaluateSequence = function (arr) {
         );
         this.context.isLambda = isLambda;
         this.context.isImplicitLambda = isImplicitLambda;
+        this.context.isCustomBlock = isCustomBlock;
         if (upvars) {
             this.context.upvars = new UpvarReference(upvars);
         }
@@ -3168,6 +3192,78 @@ Process.prototype.runContinuation = function (aContext, args) {
             1,
             parms[0]
         );
+    }
+};
+
+// Process custom block primitives
+
+Process.prototype.evaluateCustomBlock = function () {
+    var context = this.context.expression.definition.body,
+        declarations = this.context.expression.definition.declarations,
+        args = new List(this.context.inputs),
+        parms = args.asArray(),
+        runnable,
+        extra,
+        i,
+        value,
+        upvars,
+        outer;
+
+    if (!context) {return null; }
+
+    outer = new Context();
+    outer.receiver = this.context.receiver; // || this.homeContext.receiver;
+    outer.variables.parentFrame = outer.receiver ?
+            outer.receiver.variables : null;
+
+    runnable = new Context(
+        this.context.parentContext,
+        context.expression,
+        outer,
+        outer.receiver,
+        true // is custom block
+    );
+    extra = new Context(runnable, 'doYield');
+
+    this.context.parentContext = extra;
+
+    runnable.isLambda = true;
+    runnable.isCustomBlock = true;
+
+    // passing parameters if any were passed
+    if (parms.length > 0) {
+
+        // assign formal parameters
+        for (i = 0; i < context.inputs.length; i += 1) {
+            value = 0;
+            if (!isNil(parms[i])) {
+                value = parms[i];
+            }
+            outer.variables.addVar(context.inputs[i], value);
+
+            // if the parameter is an upvar,
+            // create an UpvarReference to it
+            if (declarations[context.inputs[i]][0] === '%upvar') {
+                if (!upvars) { // lazy initialization
+                    upvars = new UpvarReference(this.context.upvars);
+                }
+                upvars.addReference(
+                    value,
+                    context.inputs[i],
+                    outer.variables
+                );
+            }
+        }
+    }
+
+    if (upvars) {
+        runnable.upvars = upvars;
+    } else if (this.context.upvars) {
+        runnable.upvars = new UpvarReference(this.context.upvars);
+    }
+
+    if (runnable.expression instanceof CommandBlock) {
+        runnable.expression = runnable.expression.blockSequence();
     }
 };
 
@@ -4642,25 +4738,21 @@ Sprite.prototype.initBlocks = function () {
         // Looks
         doSayFor: {
             type: 'command',
-            category: 'looks',
             spec: 'say %s for %n secs',
             defaults: [localize('Hello!'), 2]
         },
         bubble: {
             type: 'command',
-            category: 'looks',
             spec: 'say %s',
             defaults: [localize('Hello!')]
         },
         doThinkFor: {
             type: 'command',
-            category: 'looks',
             spec: 'think %s for %n secs',
             defaults: [localize('Hmm...'), 2]
         },
         doThink: {
             type: 'command',
-            category: 'looks',
             spec: 'think %s',
             defaults: [localize('Hmm...')]
         },
@@ -4668,138 +4760,112 @@ Sprite.prototype.initBlocks = function () {
         // Looks - Debugging primitives for development mode
         alert: {
             type: 'command',
-            category: 'looks',
             spec: 'alert %mult%s'
         },
         log: {
             type: 'command',
-            category: 'looks',
             spec: 'console log %mult%s'
         },
 
         // Control
         receiveGo: {
             type: 'hat',
-            category: 'control',
             spec: 'when %greenflag clicked'
         },
         receiveMessage: {
             type: 'hat',
-            category: 'control',
             spec: 'when I receive %msgHat'
         },
         doBroadcast: {
             type: 'command',
-            category: 'control',
             spec: 'broadcast %msg'
         },
         doBroadcastAndWait: {
             type: 'command',
-            category: 'control',
             spec: 'broadcast %msg and wait'
         },
         getLastMessage: {
             type: 'reporter',
-            category: 'control',
             spec: 'message'
         },
         doWait: {
             type: 'command',
-            category: 'control',
             spec: 'wait %n secs',
             defaults: [1]
         },
         doWaitUntil: {
             type: 'command',
-            category: 'control',
             spec: 'wait until %b'
         },
         doForever: {
             type: 'command',
-            category: 'control',
             spec: 'forever %c'
         },
         doRepeat: {
             type: 'command',
-            category: 'control',
             spec: 'repeat %n %c',
             defaults: [10]
         },
         doUntil: {
             type: 'command',
-            category: 'control',
             spec: 'repeat until %b %c'
         },
         doIf: {
             type: 'command',
-            category: 'control',
             spec: 'if %b %c'
         },
         doIfElse: {
             type: 'command',
-            category: 'control',
             spec: 'if %b %c else %c'
         },
         doStopThis: {
             type: 'command',
-            category: 'control',
             spec: 'stop %stopChoices'
         },
         doStopOthers: {
             type: 'command',
-            category: 'control',
             spec: 'stop %stopOthersChoices'
         },
         doRun: {
             type: 'command',
-            category: 'control',
             spec: 'run %cmdRing %inputs'
         },
         fork: {
             type: 'command',
-            category: 'control',
             spec: 'launch %cmdRing %inputs'
         },
         evaluate: {
             type: 'reporter',
-            category: 'control',
             spec: 'call %repRing %inputs'
         },
         doReport: {
             type: 'command',
-            category: 'control',
             spec: 'report %s'
         },
         doCallCC: {
             type: 'command',
-            category: 'control',
             spec: 'run %cmdRing w/continuation'
         },
         reportCallCC: {
             type: 'reporter',
-            category: 'control',
             spec: 'call %cmdRing w/continuation'
         },
         doWarp: {
             type: 'command',
-            category: 'other',
             spec: 'warp %c'
         },
 
         // Cloning - very experimental
         receiveOnClone: {
             type: 'hat',
-            category: 'control',
             spec: 'when I start as a clone'
         },
         createClone: {
             type: 'command',
-            category: 'control',
             spec: 'create a clone of %cln'
         },
         removeClone: {
             type: 'command',
-            category: 'control',
             spec: 'delete this clone'
         },
 
@@ -4807,7 +4873,6 @@ Sprite.prototype.initBlocks = function () {
 
         doPauseAll: {
             type: 'command',
-            category: 'control',
             spec: 'pause all %pause'
         },
 
@@ -4815,201 +4880,164 @@ Sprite.prototype.initBlocks = function () {
 
         reportStackSize: {
             type: 'reporter',
-            category: 'sensing',
             spec: 'stack size'
         },
         reportFrameCount: {
             type: 'reporter',
-            category: 'sensing',
             spec: 'frames'
         },
         doResetTimer: {
             type: 'command',
-            category: 'sensing',
             spec: 'reset timer'
         },
         reportTimer: { // retained for legacy compatibility
             type: 'reporter',
-            category: 'sensing',
             spec: 'timer'
         },
         getTimer: {
             type: 'reporter',
-            category: 'sensing',
             spec: 'timer'
         },
         reportAttributeOf: {
             type: 'reporter',
-            category: 'sensing',
             spec: '%att of %spr',
             defaults: [['costume #']]
         },
         reportURL: {
             type: 'reporter',
-            category: 'sensing',
             spec: 'http:// %s',
             defaults: ['snap.berkeley.edu']
         },
         reportDate: {
             type: 'reporter',
-            category: 'sensing',
             spec: 'current %dates'
         },
 
         // Operators
         reifyScript: {
             type: 'ring',
-            category: 'other',
             spec: '%rc %ringparms'
         },
         reifyReporter: {
             type: 'ring',
-            category: 'other',
             spec: '%rr %ringparms'
         },
         reifyPredicate: {
             type: 'ring',
-            category: 'other',
             spec: '%rp %ringparms'
         },
         reportSum: {
             type: 'reporter',
-            category: 'operators',
             spec: '%n + %n'
         },
         reportDifference: {
             type: 'reporter',
-            category: 'operators',
             spec: '%n \u2212 %n'
         },
         reportProduct: {
             type: 'reporter',
-            category: 'operators',
             spec: '%n \u00D7 %n'
         },
         reportQuotient: {
             type: 'reporter',
-            category: 'operators',
             spec: '%n / %n' // '%n \u00F7 %n'
         },
         reportRound: {
             type: 'reporter',
-            category: 'operators',
             spec: 'round %n'
         },
         reportMonadic: {
             type: 'reporter',
-            category: 'operators',
             spec: '%fun of %n',
             defaults: [null, 10]
         },
         reportModulus: {
             type: 'reporter',
-            category: 'operators',
             spec: '%n mod %n'
         },
         reportRandom: {
             type: 'reporter',
-            category: 'operators',
             spec: 'pick random %n to %n',
             defaults: [1, 10]
         },
         reportLessThan: {
             type: 'predicate',
-            category: 'operators',
             spec: '%s < %s'
         },
         reportEquals: {
             type: 'predicate',
-            category: 'operators',
             spec: '%s = %s'
         },
         reportGreaterThan: {
             type: 'predicate',
-            category: 'operators',
             spec: '%s > %s'
         },
         reportAnd: {
             type: 'predicate',
-            category: 'operators',
             spec: '%b and %b'
         },
         reportOr: {
             type: 'predicate',
-            category: 'operators',
             spec: '%b or %b'
         },
         reportNot: {
             type: 'predicate',
-            category: 'operators',
             spec: 'not %b'
         },
         reportTrue: {
             type: 'predicate',
-            category: 'operators',
             spec: 'true'
         },
         reportFalse: {
             type: 'predicate',
-            category: 'operators',
             spec: 'false'
         },
         reportJoinWords: {
             type: 'reporter',
-            category: 'operators',
             spec: 'join %words',
             defaults: [localize('hello') + ' ', localize('world')]
         },
         reportLetter: {
             type: 'reporter',
-            category: 'operators',
             spec: 'letter %n of %s',
             defaults: [1, localize('world')]
         },
         reportStringSize: {
             type: 'reporter',
-            category: 'operators',
             spec: 'length of %s',
             defaults: [localize('world')]
         },
         reportUnicode: {
             type: 'reporter',
-            category: 'operators',
             spec: 'unicode of %s',
             defaults: ['a']
         },
         reportUnicodeAsLetter: {
             type: 'reporter',
-            category: 'operators',
             spec: 'unicode %n as letter',
             defaults: [65]
         },
         reportIsA: {
             type: 'predicate',
-            category: 'operators',
             spec: 'is %s a %typ ?',
             defaults: [5]
         },
         reportIsIdentical: {
             type: 'predicate',
-            category: 'operators',
             spec: 'is %s identical to %s ?'
         },
         reportTextSplit: {
             type: 'reporter',
-            category: 'operators',
             spec: 'split %s by %delim',
             defaults: [localize('hello') + ' ' + localize('world'), " "]
         },
         reportTypeOf: { // only in dev mode for debugging
             type: 'reporter',
-            category: 'operators',
             spec: 'type of %s',
             defaults: [5]
         },
         reportTextFunction: { // only in dev mode - experimental
             type: 'reporter',
-            category: 'operators',
             spec: '%txtfun of %s',
             defaults: [null, "Abelson & Sussman"]
         },
@@ -5017,76 +5045,63 @@ Sprite.prototype.initBlocks = function () {
         // Variables
         doSetVar: {
             type: 'command',
-            category: 'variables',
             spec: 'set %var to %s',
             defaults: [null, 0]
         },
         doChangeVar: {
             type: 'command',
-            category: 'variables',
             spec: 'change %var by %n',
             defaults: [null, 1]
         },
         doDeclareVariables: {
             type: 'command',
-            category: 'other',
             spec: 'script variables %scriptVars'
         },
 
         // Lists
         reportNewList: {
             type: 'reporter',
-            category: 'lists',
             spec: 'list %exp'
         },
         reportCONS: {
             type: 'reporter',
-            category: 'lists',
             spec: '%s in front of %l'
         },
         reportListItem: {
             type: 'reporter',
-            category: 'lists',
             spec: 'item %idx of %l',
             defaults: [1]
         },
         reportCDR: {
             type: 'reporter',
-            category: 'lists',
             spec: 'all but first of %l'
         },
         reportListLength: {
             type: 'reporter',
-            category: 'lists',
             spec: 'length of %l'
         },
         reportListContainsItem: {
             type: 'predicate',
-            category: 'lists',
             spec: '%l contains %s',
             defaults: [null, localize('thing')]
         },
         doAddToList: {
             type: 'command',
-            category: 'lists',
             spec: 'add %s to %l',
             defaults: [localize('thing')]
         },
         doDeleteFromList: {
             type: 'command',
-            category: 'lists',
             spec: 'delete %ida of %l',
             defaults: [1]
         },
         doInsertInList: {
             type: 'command',
-            category: 'lists',
             spec: 'insert %s at %idx of %l',
             defaults: [localize('thing'), 1]
         },
         doReplaceInList: {
             type: 'command',
-            category: 'lists',
             spec: 'replace item %idx of %l with %s',
             defaults: [1, null, localize('thing')]
         },
@@ -5094,33 +5109,66 @@ Sprite.prototype.initBlocks = function () {
         // MAP - experimental
         reportMap: {
             type: 'reporter',
-            category: 'lists',
             spec: 'map %repRing over %l'
         },
 
         // Code mapping - experimental
         doMapCodeOrHeader: { // experimental
             type: 'command',
-            category: 'other',
             spec: 'map %cmdRing to %codeKind %code'
         },
         doMapStringCode: { // experimental
             type: 'command',
-            category: 'other',
             spec: 'map String to code %code',
             defaults: ['<#1>']
         },
         doMapListCode: { // experimental
             type: 'command',
-            category: 'other',
             spec: 'map %codeListPart of %codeListKind to code %code'
         },
         reportMappedCode: { // experimental
             type: 'reporter',
-            category: 'other',
             spec: 'code of %cmdRing'
-        }
-    };
+        },
+
+		// Snap4Arduino
+
+		reportAnalogReading: 
+		{
+			type: 'reporter',
+			spec: 'analog reading %analogPin'
+		},
+		reportDigitalReading:
+		{
+			type: 'reporter',
+			spec: 'digital reading %digitalPin'
+		},
+		connectArduino:
+		{
+			type: 'command',
+			spec: 'connect arduino %arduinoType at %port'
+		},
+		setPinMode:
+		{
+			type: 'command',
+			spec: 'setup digital pin %digitalPin as %pinMode'
+		},
+		digitalWrite:
+		{
+			type: 'command',
+			spec: 'set digital pin %digitalPin to %b'
+		},
+		servoWrite:
+		{
+			type: 'command',
+			spec: 'set servo %servoPin to %servoValue'
+		},
+		pwmWrite:
+		{
+			type: 'command',
+			spec: 'set PWM pin %pwmPin to %n'
+		}
+	};
 };
 
 Sprite.prototype.initBlocks();
@@ -5154,6 +5202,7 @@ Sprite.prototype.init = function (globals) {
     this.name = localize('Sprite');
     this.variables = new VariableFrame(globals || null, this);
     this.scripts = new SteppingNode();
+    this.customBlocks = [];
     this.scripts.owner = this;
     this.version = Date.now(); // for observer optimization
     this.isClone = false; // indicate a "temporary" Scratch-style clone
@@ -5179,6 +5228,15 @@ Sprite.prototype.fullCopy = function () {
     c.variables = this.variables.copy();
     c.variables.owner = c;
 
+    c.customBlocks = [];
+    this.customBlocks.forEach(function (def) {
+        cb = def.copyAndBindTo(c);
+        c.customBlocks.push(cb);
+        c.allBlockInstances(def).forEach(function (block) {
+            block.definition = cb;
+        });
+    });
+
     c.parts = [];
 
     return c;
@@ -5202,7 +5260,6 @@ Sprite.prototype.blockForSelector = function (selector, setDefaults) {
         : info.type === 'hat' ? new HatBlock()
             : info.type === 'ring' ? new Ring()
                 : new ReporterBlock(info.type === 'predicate');
-    block.category = info.category;
     block.selector = selector;
     if (contains(['reifyReporter', 'reifyPredicate'], block.selector)) {
         block.isStatic = true;
@@ -5229,7 +5286,6 @@ Sprite.prototype.blockForSelector = function (selector, setDefaults) {
 Sprite.prototype.variableBlock = function (varName) {
     var block = new ReporterBlock(false);
     block.selector = 'reportGetVar';
-    block.category = 'variables';
     block.setSpec(varName);
     return block;
 };
@@ -5237,13 +5293,9 @@ Sprite.prototype.variableBlock = function (varName) {
 // Sprite variable management
 
 Sprite.prototype.addVariable = function (name, isGlobal) {
-    var ide = this.parentThatIsA(IDE_Morph);
     if (isGlobal) {
         this.variables.parentFrame.addVar(name);
-        if (ide) {
-            ide.flushBlocksCache('variables');
-        }
-    } else {
+	} else {
         this.variables.addVar(name);
         this.blocksCache.variables = null;
     }
@@ -5362,6 +5414,128 @@ Sprite.prototype.getLastMessage = function () {
     return '';
 };
 
+// Sprite custom blocks
+
+Sprite.prototype.allBlockInstances = function (definition) {
+    var stage, objects, blocks = [], inDefinitions;
+    if (definition.isGlobal) {
+        stage = this.parentThatIsA(Stage);
+        objects = stage.children.filter(function (morph) {
+            return morph instanceof Sprite;
+        });
+        objects.push(stage);
+        objects.forEach(function (sprite) {
+            blocks = blocks.concat(sprite.allLocalBlockInstances(definition));
+        });
+        inDefinitions = [];
+        stage.globalBlocks.forEach(function (def) {
+            if (def.body) {
+                def.body.expression.allChildren().forEach(function (c) {
+                    if (c.definition && (c.definition === definition)) {
+                        inDefinitions.push(c);
+                    }
+                });
+            }
+        });
+        return blocks.concat(inDefinitions);
+    }
+    return this.allLocalBlockInstances(definition);
+};
+
+Sprite.prototype.allLocalBlockInstances = function (definition) {
+    var inScripts, inDefinitions, inBlockEditors, inPalette, result;
+
+    inScripts = this.scripts.allChildren().filter(function (c) {
+        return c.definition && (c.definition === definition);
+    });
+
+    inDefinitions = [];
+    this.customBlocks.forEach(function (def) {
+        if (def.body) {
+            def.body.expression.allChildren().forEach(function (c) {
+                if (c.definition && (c.definition === definition)) {
+                    inDefinitions.push(c);
+                }
+            });
+        }
+    });
+
+    inBlockEditors = this.allEditorBlockInstances(definition);
+    inPalette = this.paletteBlockInstance(definition);
+
+    result = inScripts.concat(inDefinitions).concat(inBlockEditors);
+    if (inPalette) {
+        result.push(inPalette);
+    }
+    return result;
+};
+
+Sprite.prototype.usesBlockInstance = function (definition) {
+    var inDefinitions,
+        inScripts = detect(
+            this.scripts.allChildren(),
+            function (c) {
+                return c.definition && (c.definition === definition);
+            }
+        );
+
+    if (inScripts) {return true; }
+
+    inDefinitions = [];
+    this.customBlocks.forEach(function (def) {
+        if (def.body) {
+            def.body.expression.allChildren().forEach(function (c) {
+                if (c.definition && (c.definition === definition)) {
+                    inDefinitions.push(c);
+                }
+            });
+        }
+    });
+    return (inDefinitions.length > 0);
+};
+
+Sprite.prototype.doubleDefinitionsFor = function (definition) {
+    var spec = definition.blockSpec(),
+        blockList,
+        idx,
+        stage;
+
+    if (definition.isGlobal) {
+        stage = this.parentThatIsA(Stage);
+        if (!stage) {return []; }
+        blockList = stage.globalBlocks;
+    } else {
+        blockList = this.customBlocks;
+    }
+    idx = blockList.indexOf(definition);
+    if (idx === -1) {return []; }
+    return blockList.filter(function (def, i) {
+        return def.blockSpec() === spec && (i !== idx);
+    });
+};
+
+Sprite.prototype.replaceDoubleDefinitionsFor = function (definition) {
+    var doubles = this.doubleDefinitionsFor(definition),
+        myself = this,
+        stage,
+        ide;
+    doubles.forEach(function (double) {
+        myself.allBlockInstances(double).forEach(function (block) {
+            block.definition = definition;
+            block.refresh();
+        });
+    });
+    if (definition.isGlobal) {
+        stage = this.parentThatIsA(Stage);
+        stage.globalBlocks = stage.globalBlocks.filter(function (def) {
+            return !contains(doubles, def);
+        });
+    } else {
+        this.customBlocks = this.customBlocks.filter(function (def) {
+            return !contains(doubles, def);
+        });
+    }
+};
 
 // Stage /////////////////////////////////////////////////////////
 
@@ -5369,7 +5543,7 @@ Sprite.prototype.getLastMessage = function () {
     I inherit from SteppingNode and copy from Sprite.
 */
 
-// Stage inherits from FrameMorph:
+// Stage inherits from SteppingNode:
 
 Stage.prototype = new SteppingNode();
 Stage.prototype.constructor = Stage;
@@ -5527,8 +5701,22 @@ Stage.prototype.allHatBlocksFor
 Stage.prototype.allHatBlocksForKey
     = Sprite.prototype.allHatBlocksForKey;
 
+// Stage custom blocks
 
+Stage.prototype.allBlockInstances
+    = Sprite.prototype.allBlockInstances;
 
+Stage.prototype.allLocalBlockInstances
+    = Sprite.prototype.allLocalBlockInstances;
+
+Stage.prototype.usesBlockInstance
+    = Sprite.prototype.usesBlockInstance;
+
+Stage.prototype.doubleDefinitionsFor
+    = Sprite.prototype.doubleDefinitionsFor;
+
+Stage.prototype.replaceDoubleDefinitionsFor
+    = Sprite.prototype.replaceDoubleDefinitionsFor;
 
 
 // ReadStream ////////////////////////////////////////////////////////////
@@ -5838,6 +6026,796 @@ List.prototype.equalTo = function (other) {
     }
     return true;
 };
+
+
+
+// coming from file(s)
+// byob.js
+
+// Declarations
+
+var CustomBlockDefinition;
+var CustomCommandBlock;
+var CustomReporterBlock;
+var PrototypeHatBlock;
+var BlockLabelFragment;
+var BlockLabelFragmentContainer;
+var BlockInputFragment;
+var BlockLabelPlaceHolder;
+var JaggedBlock;
+
+// CustomBlockDefinition ///////////////////////////////////////////////
+
+// CustomBlockDefinition instance creation:
+
+function CustomBlockDefinition(spec, receiver) {
+    this.body = null; // a Context (i.e. a reified top block)
+    this.scripts = [];
+    this.isGlobal = false;
+    this.type = 'command';
+    this.spec = spec || '';
+    // format: {'inputName' : [type, default, options, readonly]}
+    this.declarations = {};
+    this.codeMapping = null; // experimental, generate text code
+    this.codeHeader = null; // experimental, generate text code
+
+    // don't serialize (not needed for functionality):
+    this.receiver = receiver || null; // for serialization only (pointer)
+}
+
+// CustomBlockDefinition instantiating blocks
+
+CustomBlockDefinition.prototype.blockInstance = function () {
+    var block;
+    if (this.type === 'command') {
+        block = new CustomCommandBlock(this);
+    } else {
+        block = new CustomReporterBlock(
+            this,
+            this.type === 'predicate'
+        );
+    }
+    return block;
+};
+
+CustomBlockDefinition.prototype.templateInstance = function () {
+    var block;
+    block = this.blockInstance();
+    block.refreshDefaults();
+    block.isTemplate = true;
+    return block;
+};
+
+CustomBlockDefinition.prototype.prototypeInstance = function () {
+    var block, slot, myself = this;
+
+    // make a new block instance and mark it as prototype
+    if (this.type === 'command') {
+        block = new CustomCommandBlock(this, true);
+    } else {
+        block = new CustomReporterBlock(
+            this,
+            this.type === 'predicate',
+            true
+        );
+    }
+
+    // assign slot declarations to prototype inputs
+    block.parts().forEach(function (part) {
+        if (part instanceof BlockInputFragment) {
+            slot = myself.declarations[part.fragment.labelString];
+            if (slot) {
+                part.fragment.type = slot[0];
+                part.fragment.defaultValue = slot[1];
+                part.fragment.options = slot[2];
+                part.fragment.isReadonly = slot[3] || false;
+            }
+        }
+    });
+
+    return block;
+};
+
+// CustomBlockDefinition duplicating
+
+CustomBlockDefinition.prototype.copyAndBindTo = function (sprite) {
+    var c = copy(this);
+
+    c.receiver = sprite; // only for (kludgy) serialization
+    c.declarations = copy(this.declarations); // might have to go deeper
+    c.body = Process.prototype.reify.call(
+        null,
+        this.body.expression,
+        new List(this.inputNames())
+    );
+    c.body.outerContext = null;
+
+    return c;
+};
+
+// CustomBlockDefinition accessing
+
+CustomBlockDefinition.prototype.blockSpec = function () {
+    var myself = this,
+        ans = [],
+        parts = this.parseSpec(this.spec),
+        spec;
+    parts.forEach(function (part) {
+        if (part[0] === '%') {
+            spec = myself.typeOf(part.slice(1));
+        } else {
+            spec = part;
+        }
+        ans.push(spec);
+        ans.push(' ');
+    });
+    return ''.concat.apply('', ans).trim();
+};
+
+CustomBlockDefinition.prototype.helpSpec = function () {
+    var ans = [],
+        parts = this.parseSpec(this.spec);
+    parts.forEach(function (part) {
+        if (part[0] !== '%') {
+            ans.push(part);
+        }
+    });
+    return ''.concat.apply('', ans).replace(/\?/g, '');
+};
+
+CustomBlockDefinition.prototype.typeOf = function (inputName) {
+    if (this.declarations[inputName]) {
+        return this.declarations[inputName][0];
+    }
+    return '%s';
+};
+
+CustomBlockDefinition.prototype.defaultValueOf = function (inputName) {
+    if (this.declarations[inputName]) {
+        return this.declarations[inputName][1];
+    }
+    return '';
+};
+
+CustomBlockDefinition.prototype.defaultValueOfInputIdx = function (idx) {
+    var inputName = this.inputNames()[idx];
+    return this.defaultValueOf(inputName);
+};
+
+CustomBlockDefinition.prototype.dropDownMenuOfInputIdx = function (idx) {
+    var inputName = this.inputNames()[idx];
+    return this.dropDownMenuOf(inputName);
+};
+
+CustomBlockDefinition.prototype.isReadOnlyInputIdx = function (idx) {
+    var inputName = this.inputNames()[idx];
+    return this.isReadOnlyInput(inputName);
+};
+
+CustomBlockDefinition.prototype.inputOptionsOfIdx = function (idx) {
+    var inputName = this.inputNames()[idx];
+    return this.inputOptionsOf(inputName);
+};
+
+CustomBlockDefinition.prototype.dropDownMenuOf = function (inputName) {
+    var dict = {};
+    if (this.declarations[inputName] && this.declarations[inputName][2]) {
+        this.declarations[inputName][2].split('\n').forEach(function (line) {
+            var pair = line.split('=');
+            dict[pair[0]] = isNil(pair[1]) ? pair[0] : pair[1];
+        });
+        return dict;
+    }
+    return null;
+};
+
+CustomBlockDefinition.prototype.isReadOnlyInput = function (inputName) {
+    return this.declarations[inputName] &&
+        this.declarations[inputName][3] === true;
+};
+
+CustomBlockDefinition.prototype.inputOptionsOf = function (inputName) {
+    return [
+        this.isReadOnlyInput(inputName)
+    ];
+};
+
+CustomBlockDefinition.prototype.inputNames = function () {
+    var vNames = [],
+        parts = this.parseSpec(this.spec);
+    parts.forEach(function (part) {
+        if (part[0] === '%') {
+            vNames.push(part.slice(1));
+        }
+    });
+    return vNames;
+};
+
+CustomBlockDefinition.prototype.parseSpec = function (spec) {
+    // private
+    var parts = [], word = '', i, quoted = false, c;
+    for (i = 0; i < spec.length; i += 1) {
+        c = spec[i];
+        if (c === "'") {
+            quoted = !quoted;
+        } else if (c === ' ' && !quoted) {
+            parts.push(word);
+            word = '';
+        } else {
+            word = word.concat(c);
+        }
+    }
+    parts.push(word);
+    return parts;
+};
+
+
+// CustomCommandBlock /////////////////////////////////////////////
+
+// CustomCommandBlock inherits from CommandBlock:
+
+CustomCommandBlock.prototype = new CommandBlock();
+CustomCommandBlock.prototype.constructor = CustomCommandBlock;
+CustomCommandBlock.uber = CommandBlock.prototype;
+
+// CustomCommandBlock instance creation:
+
+function CustomCommandBlock(definition, isProto) {
+    this.init(definition, isProto);
+}
+
+CustomCommandBlock.prototype.init = function (definition, isProto) {
+    this.definition = definition; // mandatory
+    this.isPrototype = isProto || false; // optional
+
+    CustomCommandBlock.uber.init.call(this);
+
+    this.selector = 'evaluateCustomBlock';
+    if (definition) { // needed for de-serializing
+        this.refresh();
+    }
+};
+
+CustomCommandBlock.prototype.refresh = function () {
+    var def = this.definition,
+        newSpec = this.isPrototype ?
+                def.spec : def.blockSpec(),
+        oldInputs;
+
+    if (this.blockSpec !== newSpec) {
+        oldInputs = this.inputs();
+        this.setSpec(newSpec);
+        this.restoreInputs(oldInputs);
+    } else { // update all input slots' drop-downs
+        this.inputs().forEach(function (inp, i) {
+            if (inp instanceof InputSlot) {
+                inp.setChoices.apply(inp, def.inputOptionsOfIdx(i));
+            }
+        });
+    }
+
+    // find unnahmed upvars and label them
+    // to their internal definition (default)
+    this.inputs().forEach(function (inp, idx) {
+        if (inp instanceof TemplateSlot && inp.contents() === '\u2191') {
+            inp.setContents(def.inputNames()[idx]);
+        }
+    });
+};
+
+CustomCommandBlock.prototype.restoreInputs = function (oldInputs) {
+    // try to restore my previous inputs when my spec has been changed
+    var i = 0,
+        old,
+        myself = this;
+
+    if (this.isPrototype) {return; }
+    this.inputs().forEach(function (inp) {
+        old = oldInputs[i];
+        if (old instanceof ReporterBlock &&
+                (!(inp instanceof TemplateSlot))) {
+            myself.silentReplaceInput(inp, old);
+        } else if (old instanceof InputSlot
+                && inp instanceof InputSlot) {
+            inp.setContents(old.evaluate());
+        } else if (old instanceof TemplateSlot
+                && inp instanceof TemplateSlot) {
+            inp.setContents(old.evaluate());
+        } else if (old instanceof CSlot
+                && inp instanceof CSlot) {
+            inp.nestedBlock(old.evaluate());
+        }
+        i += 1;
+    });
+};
+
+CustomCommandBlock.prototype.refreshDefaults = function () {
+    // fill my editable slots with the defaults specified in my definition
+    var inputs = this.inputs(), idx = 0, myself = this;
+
+    inputs.forEach(function (inp) {
+        if (inp instanceof InputSlot) {
+            inp.setContents(myself.definition.defaultValueOfInputIdx(idx));
+        }
+        idx += 1;
+    });
+};
+
+CustomCommandBlock.prototype.refreshPrototype = function () {
+    // create my label parts from my (edited) fragments only
+    var hat,
+        protoSpec,
+        frags = [],
+        myself = this,
+        words,
+        newFrag,
+        i = 0;
+
+    if (!this.isPrototype) {return null; }
+
+    hat = this.parentThatIsA(PrototypeHatBlock);
+
+    // remember the edited fragments
+    this.parts().forEach(function (part) {
+        if (!part.fragment.isDeleted) {
+            // take into consideration that a fragment may spawn others
+            // if it isn't an input label consisting of several words
+            if (part.fragment.type) { // marked as input, take label as is
+                frags.push(part.fragment);
+            } else { // not an input, devide into several non-input fragments
+                words = myself.definition.parseSpec(
+                    part.fragment.labelString
+                );
+                words.forEach(function (word) {
+                    newFrag = part.fragment.copy();
+                    newFrag.labelString = word;
+                    frags.push(newFrag);
+                });
+            }
+        }
+    });
+
+    // remember the edited prototype spec
+    protoSpec = this.specFromFragments();
+
+    // update the prototype's type
+    // and possibly exchange 'this' for 'myself'
+    if (this instanceof CustomCommandBlock
+            && ((hat.type === 'reporter') || (hat.type === 'predicate'))) {
+        myself = new CustomReporterBlock(
+            this.definition,
+            hat.type === 'predicate',
+            true
+        );
+        hat.silentReplaceInput(this, myself);
+    } else if (this instanceof CustomReporterBlock) {
+        if (hat.type === 'command') {
+            myself = new CustomCommandBlock(
+                this.definition,
+                true
+            );
+            hat.silentReplaceInput(this, myself);
+        } else {
+            this.isPredicate = (hat.type === 'predicate');
+        }
+    }
+
+    // update the (new) prototype's appearance
+    myself.setSpec(protoSpec);
+
+    myself.parts().forEach(function (part) {
+        if (!(part instanceof BlockLabelPlaceHolder)) {
+            if (frags[i]) { // don't delete the default fragment
+                part.fragment = frags[i];
+            }
+            i += 1;
+        }
+    });
+
+    // refresh slot type indicators
+    this.refreshPrototypeSlotTypes();
+};
+
+CustomCommandBlock.prototype.refreshPrototypeSlotTypes = function () {
+    this.parts().forEach(function (part) {
+        if (part instanceof BlockInputFragment) {
+            part.template().instantiationSpec = part.contents();
+            part.setContents(part.fragment.defTemplateSpecFragment());
+        }
+    });
+};
+
+CustomCommandBlock.prototype.declarationsFromFragments = function () {
+    // format for type declarations: {inputName : [type, default]}
+    var ans = {};
+
+    this.parts().forEach(function (part) {
+        if (part instanceof BlockInputFragment) {
+            ans[part.fragment.labelString] = [
+                part.fragment.type,
+                part.fragment.defaultValue,
+                part.fragment.options,
+                part.fragment.isReadOnly
+            ];
+        }
+    });
+    return ans;
+};
+
+CustomCommandBlock.prototype.parseSpec = function (spec) {
+    if (!this.isPrototype) {
+        return CustomCommandBlock.uber.parseSpec.call(this, spec);
+    }
+    return this.definition.parseSpec.call(this, spec);
+};
+
+CustomCommandBlock.prototype.labelPart = function (spec) {
+    var part;
+
+    if (!this.isPrototype) {
+        return CustomCommandBlock.uber.labelPart.call(this, spec);
+    }
+    if ((spec[0] === '%') && (spec.length > 1)) {
+        part = new BlockInputFragment(spec.slice(1));
+    } else {
+        part = new BlockLabelFragment(spec);
+    }
+    return part;
+};
+
+CustomCommandBlock.prototype.placeHolder = function () {
+    var part;
+
+    part = new BlockLabelPlaceHolder();
+    return part;
+};
+
+CustomCommandBlock.prototype.attachTargets = function () {
+    if (this.isPrototype) {
+        return [];
+    }
+    return CustomCommandBlock.uber.attachTargets.call(this);
+};
+
+CustomCommandBlock.prototype.isInUse = function () {
+    // anser true if an instance of my definition is found
+    // in any of my receiver's scripts or block definitions
+    return this.receiver().usesBlockInstance(this.definition);
+};
+
+
+// CustomReporterBlock ////////////////////////////////////////////
+
+// CustomReporterBlock inherits from ReporterBlock:
+
+CustomReporterBlock.prototype = new ReporterBlock();
+CustomReporterBlock.prototype.constructor = CustomReporterBlock;
+CustomReporterBlock.uber = ReporterBlock.prototype;
+
+// CustomReporterBlock instance creation:
+
+function CustomReporterBlock(definition, isPredicate, isProto) {
+    this.init(definition, isPredicate, isProto);
+}
+
+CustomReporterBlock.prototype.init = function (
+    definition,
+    isPredicate,
+    isProto
+) {
+    this.definition = definition; // mandatory
+    this.isPrototype = isProto || false; // optional
+
+    CustomReporterBlock.uber.init.call(this, isPredicate);
+
+    this.selector = 'evaluateCustomBlock';
+    if (definition) { // needed for de-serializing
+        this.refresh();
+    }
+};
+
+CustomReporterBlock.prototype.refresh = function () {
+    CustomCommandBlock.prototype.refresh.call(this);
+    if (!this.isPrototype) {
+        this.isPredicate = (this.definition.type === 'predicate');
+    }
+};
+
+CustomReporterBlock.prototype.placeHolder
+    = CustomCommandBlock.prototype.placeHolder;
+
+CustomReporterBlock.prototype.parseSpec
+    = CustomCommandBlock.prototype.parseSpec;
+
+CustomReporterBlock.prototype.labelPart
+    = CustomCommandBlock.prototype.labelPart;
+
+CustomReporterBlock.prototype.upvarFragmentNames
+    = CustomCommandBlock.prototype.upvarFragmentNames;
+
+CustomReporterBlock.prototype.upvarFragmentName
+    = CustomCommandBlock.prototype.upvarFragmentName;
+
+CustomReporterBlock.prototype.inputFragmentNames
+    = CustomCommandBlock.prototype.inputFragmentNames;
+
+CustomReporterBlock.prototype.specFromFragments
+    = CustomCommandBlock.prototype.specFromFragments;
+
+CustomReporterBlock.prototype.blockSpecFromFragments
+    = CustomCommandBlock.prototype.blockSpecFromFragments;
+
+CustomReporterBlock.prototype.declarationsFromFragments
+    = CustomCommandBlock.prototype.declarationsFromFragments;
+
+CustomReporterBlock.prototype.refreshPrototype
+    = CustomCommandBlock.prototype.refreshPrototype;
+
+CustomReporterBlock.prototype.refreshPrototypeSlotTypes
+    = CustomCommandBlock.prototype.refreshPrototypeSlotTypes;
+
+CustomReporterBlock.prototype.restoreInputs
+    = CustomCommandBlock.prototype.restoreInputs;
+
+CustomReporterBlock.prototype.refreshDefaults
+    = CustomCommandBlock.prototype.refreshDefaults;
+
+CustomReporterBlock.prototype.isInUse
+    = CustomCommandBlock.prototype.isInUse;
+
+// JaggedBlock ////////////////////////////////////////////////////
+
+/*
+    I am a reporter block with jagged left and right edges conveying the
+    appearance of having the broken out of a bigger block. I am used to
+    display input types in the long form input dialog.
+*/
+
+// JaggedBlock inherits from ReporterBlock:
+
+JaggedBlock.prototype = new ReporterBlock();
+JaggedBlock.prototype.constructor = JaggedBlock;
+JaggedBlock.uber = ReporterBlock.prototype;
+
+// JaggedBlockpreferences settings:
+
+JaggedBlock.prototype.jag = 5;
+
+// JaggedBlockinstance creation:
+
+function JaggedBlock(spec) {
+    this.init(spec);
+}
+
+JaggedBlock.prototype.init = function (spec) {
+    JaggedBlock.uber.init.call(this);
+    if (spec) {this.setSpec(spec); }
+};
+
+
+// PrototypeHatBlock /////////////////////////////////////////////
+
+// PrototypeHatBlock inherits from HatBlock:
+
+PrototypeHatBlock.prototype = new HatBlock();
+PrototypeHatBlock.prototype.constructor = PrototypeHatBlock;
+PrototypeHatBlock.uber = HatBlock.prototype;
+
+// PrototypeHatBlock instance creation:
+
+function PrototypeHatBlock(definition) {
+    this.init(definition);
+}
+
+PrototypeHatBlock.prototype.init = function (definition) {
+    var proto = definition.prototypeInstance();
+
+    this.definition = definition;
+
+    // additional attributes to store edited data
+    this.blockCategory = definition ? definition.category : null;
+    this.type = definition ? definition.type : null;
+
+    // init inherited stuff
+    HatBlock.uber.init.call(this);
+    this.add(proto);
+    proto.refreshPrototypeSlotTypes(); // show slot type indicators
+};
+
+
+// BlockLabelFragment //////////////////////////////////////////////////
+
+// BlockLabelFragment instance creation:
+
+function BlockLabelFragment(labelString) {
+    this.labelString = labelString || '';
+    this.type = '%s';    // null for label, a spec for an input
+    this.defaultValue = '';
+    this.options = '';
+    this.isReadOnly = false; // for input slots
+    this.isDeleted = false;
+}
+
+// accessing
+
+BlockLabelFragment.prototype.defSpecFragment = function () {
+    // answer a string representing my prototype's spec
+    var pref = this.type ? '%\'' : '';
+    return this.isDeleted ?
+            '' : pref + this.labelString + (this.type ? '\'' : '');
+};
+
+BlockLabelFragment.prototype.defTemplateSpecFragment = function () {
+    // answer a string representing my prototype's spec
+    // which also indicates my type, default value or arity
+    var suff = '';
+    if (!this.type) {return this.defSpecFragment(); }
+    if (this.isUpvar()) {
+        suff = ' \u2191';
+    } else if (this.isMultipleInput()) {
+        suff = '...';
+    } else if (this.type === '%cs') {
+        suff = ' \u03BB'; // ' [\u03BB'
+    } else if (this.type === '%b') {
+        suff = ' ?';
+    } else if (this.type === '%l') {
+        suff = ' \uFE19';
+    } else if (this.type === '%obj') {
+        suff = ' %turtleOutline';
+    } else if (contains(
+            ['%cmdRing', '%repRing', '%predRing', '%anyUE', '%boolUE'],
+            this.type
+        )) {
+        suff = ' \u03BB';
+    } else if (this.defaultValue) {
+        suff = ' = ' + this.defaultValue.toString();
+    }
+    return this.labelString + suff;
+};
+
+BlockLabelFragment.prototype.blockSpecFragment = function () {
+    // answer a string representing my block spec
+    return this.isDeleted ? '' : this.type || this.labelString;
+};
+
+BlockLabelFragment.prototype.copy = function () {
+    var ans = new BlockLabelFragment(this.labelString);
+    ans.type = this.type;
+    ans.defaultValue = this.defaultValue;
+    ans.options = this.options;
+    ans.isReadOnly = this.isReadOnly;
+    return ans;
+};
+
+// arity
+
+BlockLabelFragment.prototype.isSingleInput = function () {
+    return !this.isMultipleInput() &&
+        (this.type !== '%upvar');
+};
+
+BlockLabelFragment.prototype.isMultipleInput = function () {
+    // answer true if the type begins with '%mult'
+    if (!this.type) {
+        return false; // not an input at all
+    }
+    return this.type.indexOf('%mult') > -1;
+};
+
+BlockLabelFragment.prototype.isUpvar = function () {
+    if (!this.type) {
+        return false; // not an input at all
+    }
+    return this.type === '%upvar';
+};
+
+BlockLabelFragment.prototype.setToSingleInput = function () {
+    if (!this.type) {return null; } // not an input at all
+    if (this.type === '%upvar') {
+        this.type = '%s';
+    } else {
+        this.type = this.singleInputType();
+    }
+};
+
+BlockLabelFragment.prototype.setToMultipleInput = function () {
+    if (!this.type) {return null; } // not an input at all
+    if (this.type === '%upvar') {
+        this.type = '%s';
+    }
+    this.type = '%mult'.concat(this.singleInputType());
+};
+
+BlockLabelFragment.prototype.setToUpvar = function () {
+    if (!this.type) {return null; } // not an input at all
+    this.type = '%upvar';
+};
+
+BlockLabelFragment.prototype.singleInputType = function () {
+    // answer the type of my input withtou any preceding '%mult'
+    if (!this.type) {
+        return null; // not an input at all
+    }
+    if (this.isMultipleInput()) {
+        return this.type.substr(5); // everything following '%mult'
+    }
+    return this.type;
+};
+
+BlockLabelFragment.prototype.setSingleInputType = function (type) {
+    if (!this.type || !this.isMultipleInput()) {
+        this.type = type;
+    } else {
+        this.type = '%mult'.concat(type);
+    }
+};
+
+// BlockLabelFragmentContainer ///////////////////////////////////////////////
+
+/*
+    I am a single word in a custom block prototype's label. I can be clicked
+    to edit my contents and to turn me into an input placeholder.
+*/
+
+// BlockLabelFragmentContainer inherits from StringContainer:
+
+BlockLabelFragmentContainer.prototype = new StringContainer();
+BlockLabelFragmentContainer.prototype.constructor = BlockLabelFragmentContainer;
+BlockLabelFragmentContainer.uber = StringContainer.prototype;
+
+// BlockLabelFragmentContainer instance creation:
+
+function BlockLabelFragmentContainer(text) {
+    this.init(text);
+}
+
+BlockLabelFragmentContainer.prototype.init = function (text) {
+    this.fragment = new BlockLabelFragment(text);
+    this.fragment.type = null;
+    this.sO = null; // temporary backup for shadowOffset
+    BlockLabelFragmentContainer.uber.init.call(
+        this,
+        text,
+		null
+    );
+};
+
+BlockLabelFragmentContainer.prototype.updateBlockLabel = function (newFragment) {
+    var prot = this.parentThatIsA(Block);
+
+    this.fragment = newFragment;
+    if (prot) {
+        prot.refreshPrototype();
+    }
+};
+
+// BlockInputFragment ///////////////////////////////////////////////
+
+/*
+    I am a variable blob in a custom block prototype's label. I can be clicked
+    to edit my contents and to turn me into an part of the block's label text.
+*/
+
+// BlockInputFragment inherits from TemplateSlot:
+
+BlockInputFragment.prototype = new TemplateSlot();
+BlockInputFragment.prototype.constructor = BlockInputFragment;
+BlockInputFragment.uber = TemplateSlot.prototype;
+
+// BlockInputFragment instance creation:
+
+function BlockInputFragment(text) {
+    this.init(text);
+}
+
+BlockInputFragment.prototype.init = function (text) {
+    this.fragment = new BlockLabelFragment(text);
+    this.fragment.type = '%s';
+    BlockInputFragment.uber.init.call(this, text);
+};
+
+BlockInputFragment.prototype.updateBlockLabel
+    = BlockLabelFragmentContainer.prototype.updateBlockLabel;
 
 
 
@@ -6339,6 +7317,14 @@ SnapSerializer.prototype.loadProjectModel = function (xmlNode) {
     }
 
     model.globalBlocks = model.project.childNamed('blocks');
+    if (model.globalBlocks) {
+        this.loadCustomBlocks(project.stage, model.globalBlocks, true);
+        this.populateCustomBlocks(
+            project.stage,
+            model.globalBlocks,
+            true
+        );
+    }
     this.loadObject(project.stage, model.stage);
 
     /* Sprites */
@@ -6366,6 +7352,7 @@ SnapSerializer.prototype.loadProjectModel = function (xmlNode) {
 };
 
 SnapSerializer.prototype.loadBlocks = function (xmlString, targetStage) {
+    // public - answer a new Array of custom block definitions
     // represented by the given XML String
     var stage = new Stage(),
         model;
@@ -6379,6 +7366,12 @@ SnapSerializer.prototype.loadBlocks = function (xmlString, targetStage) {
     if (+model.attributes.version > this.version) {
         throw 'Module uses newer version of Serializer';
     }
+	this.loadCustomBlocks(stage, model, true);
+    this.populateCustomBlocks(
+        stage,
+        model,
+        true
+    );
     this.objects = {};
     stage.globalBlocks.forEach(function (def) {
         def.receiver = null;
@@ -6427,6 +7420,8 @@ SnapSerializer.prototype.loadSprites = function (xmlString, ide) {
 SnapSerializer.prototype.loadObject = function (object, model) {
     // private
     var blocks = model.require('blocks');
+	this.loadCustomBlocks(object, blocks);
+    this.populateCustomBlocks(object, blocks);
     this.loadVariables(object.variables, model.require('variables'));
     this.loadScripts(object.scripts, model.require('scripts'));
 };
@@ -6447,6 +7442,102 @@ SnapSerializer.prototype.loadVariables = function (varFrame, element) {
     });
 };
 
+SnapSerializer.prototype.loadCustomBlocks = function (
+    object,
+    element,
+    isGlobal
+) {
+    // private
+    var myself = this;
+    element.children.forEach(function (child) {
+        var definition, names, inputs, header, code, i;
+        if (child.tag !== 'block-definition') {
+            return;
+        }
+        definition = new CustomBlockDefinition(
+            child.attributes.s || '',
+            object
+        );
+        definition.type = child.attributes.type || 'command';
+        definition.isGlobal = (isGlobal === true);
+        if (definition.isGlobal) {
+            object.globalBlocks.push(definition);
+        } else {
+            object.customBlocks.push(definition);
+        }
+
+        names = definition.parseSpec(definition.spec).filter(
+            function (str) {
+                return str.charAt(0) === '%';
+            }
+        ).map(function (str) {
+            return str.substr(1);
+        });
+
+        definition.names = names;
+        inputs = child.childNamed('inputs');
+        if (inputs) {
+            i = -1;
+            inputs.children.forEach(function (child) {
+                var options = child.childNamed('options');
+                if (child.tag !== 'input') {
+                    return;
+                }
+                i += 1;
+                definition.declarations[names[i]] = [
+                    child.attributes.type,
+                    child.contents,
+                    options ? options.contents : undefined,
+                    child.attributes.readonly === 'true'
+                ];
+            });
+        }
+
+        header = child.childNamed('header');
+        if (header) {
+            definition.codeHeader = header.contents;
+        }
+
+        code = child.childNamed('code');
+        if (code) {
+            definition.codeMapping = code.contents;
+        }
+	});
+};
+
+SnapSerializer.prototype.populateCustomBlocks = function (
+    object,
+    element,
+    isGlobal
+) {
+    // private
+    var myself = this;
+    element.children.forEach(function (child, index) {
+        var definition, script, scripts;
+        if (child.tag !== 'block-definition') {
+            return;
+        }
+        definition = isGlobal ? object.globalBlocks[index]
+                : object.customBlocks[index];
+        script = child.childNamed('script');
+        if (script) {
+            definition.body = new Context(
+                null,
+                script ? myself.loadScript(script) : null,
+                null,
+                object
+            );
+            definition.body.inputs = definition.names.slice(0);
+        }
+        scripts = child.childNamed('scripts');
+        if (scripts) {
+            definition.scripts = myself.loadScriptsArray(scripts);
+        }
+
+        delete definition.names;
+    });
+};
+
 SnapSerializer.prototype.loadScripts = function (scripts, model) {
     // private
     var myself = this;
@@ -6458,12 +7549,7 @@ SnapSerializer.prototype.loadScripts = function (scripts, model) {
                 return;
             }
             scripts.add(element);
-        } else if (child.tag === 'comment') {
-            if (!element) {
-                return;
-            }
-            scripts.add(element);
-        }
+        } 
     });
 };
 
@@ -6479,12 +7565,7 @@ SnapSerializer.prototype.loadScriptsArray = function (model) {
                 return;
             }
             scripts.push(element);
-        } else if (child.tag === 'comment') {
-            if (!element) {
-                return;
-            }
-            scripts.push(element);
-        }
+        } 
     });
     return scripts;
 };
@@ -6521,15 +7602,54 @@ SnapSerializer.prototype.loadBlock = function (model, isReporter) {
             );
         }
         block = Sprite.prototype.blockForSelector(model.attributes.s);
+    } else if (model.tag === 'custom-block') {
+        isGlobal = model.attributes.scope ? false : true;
+        receiver = isGlobal ? this.project.stage
+            : this.project.sprites[model.attributes.scope];
+        rm = model.childNamed('receiver');
+        if (rm && rm.children[0]) {
+            receiver = this.loadValue(
+                model.childNamed('receiver').children[0]
+            );
+        }
+        if (!receiver) {
+            return this.obsoleteBlock(isReporter);
+        }
+        if (isGlobal) {
+            info = detect(receiver.globalBlocks, function (block) {
+                return block.blockSpec() === model.attributes.s;
+            });
+            if (!info && this.project.targetStage) { // importing block files
+                info = detect(
+                    this.project.targetStage.globalBlocks,
+                    function (block) {
+                        return block.blockSpec() === model.attributes.s;
+                    }
+                );
+            }
+        } else {
+            info = detect(receiver.customBlocks, function (block) {
+                return block.blockSpec() === model.attributes.s;
+            });
+        }
+        if (!info) {
+            return this.obsoleteBlock(isReporter);
+        }
+        block = info.type === 'command' ? new CustomCommandBlock(
+            info,
+            false
+        ) : new CustomReporterBlock(
+            info,
+            info.type === 'predicate',
+            false
+        );
     }
     if (block === null) {
         block = this.obsoleteBlock(isReporter);
     }
     inputs = block.inputs();
     model.children.forEach(function (child, i) {
-        if (child.tag === 'comment') {
-            nop(); // ignore
-        } else if (child.tag === 'receiver') {
+        if (child.tag === 'receiver') {
             nop(); // ignore
         } else {
             this.loadInput(child, inputs[i], block);
@@ -6572,7 +7692,7 @@ SnapSerializer.prototype.loadInput = function (model, input, block) {
                 input
             );
         });
-    } else if (model.tag === 'block') {
+    } else if (model.tag === 'block' || model.tag === 'custom-block') {
         block.silentReplaceInput(input, this.loadBlock(model, true));
     } else {
         val = this.loadValue(model);
@@ -6711,6 +7831,199 @@ SnapSerializer.prototype.loadValue = function (model) {
     return undefined;
 };
 
+
+
+// Snap4Arduino ////////////////////////////////////////////////////
+
+if (isS4Aproject) {
+	// coming from file(s)
+	// s4aClient.js
+
+	var pharoUrl = "localhost:8080/";
+	var snapUrl = pharoUrl + "s4a.html";
+	var webSocketUrl= "ws://localhost:4001/s4a";
+
+	var analogReadings = [];
+	var digitalReadings = [];
+	var analogReadingThreadId;
+	var digitalReadingThreadId;
+	var arduinoTypes = {
+		"Mini"                     : "ArduinoMini",
+		"Pro w/ atmega168"         : "ArduinoPro",
+		"Mega"                     : "ArduinoMega",
+		"Ng or older w/ atmega8"   : "ArduinoATmega8",
+		"Uno"                      : "ArduinoUNO",
+		"Lilypad w/ atmega328"     : "ArduinoLilyPad328",
+		"Lilypad w/ atmega168"     : "ArduinoLilyPad",
+		"Ng or older w/ atmega168" : "ArduinoATmega168",
+		"Pro w/ atmega328"         : "ArduinoPro328",
+		"Diecimila w/ atmega168"   : "ArduinoDiecimila",
+		"Mega 2560"                : "ArduinoMega2560",
+		"Bluetooth"                : "ArduinoBT",
+		"Duemilanove w/ atmega328" : "ArduinoATmega328",
+	};
+
+	var boardSpecs = {
+		"analogPins"  : {},
+		"digitalPins" : {},
+		"servoPins"   : {},
+		"pwmPins"     : {}
+	};
+
+	// WebSocket
+
+	var WebSocket = require('ws');
+	var socket = new WebSocket(webSocketUrl);
+
+	var webSocketRefreshInterval = 10; //milliseconds
+
+	socket.on('open', function() { initializeAll() });
+
+	socket.on('message', function(message) {
+		messageArray = message.split("&");
+		switch (messageArray[0]) {
+			case 'analogReadings':
+				analogReadings = JSON.parse(messageArray[1]);
+			break;
+			case 'digitalReadings':
+				digitalReadings = JSON.parse(messageArray[1]);
+			break;
+			case 'boardSpecs':
+				boardSpecs = JSON.parse(messageArray[1]);
+			break;
+		}
+	});
+
+	socket.on('close', function() { 
+		console.log("Connection lost!", "Lost connection to the server.\nPlease make sure the server is running, then reload this page and try again.");
+		releaseAll();
+	});
+
+	// Initialize-release
+
+	function initializeAll() {
+		socket.send('greetings'); // will send a greeting back if no board is already connected. If it is, will send the boardSpecs
+		setInterval(updateState, webSocketRefreshInterval * 15); // we don't need to keep state too updated, so 15 times slower than realtime is more than ok
+	}
+
+	function releaseAll() {
+		if (analogReadingThreadId) { clearInterval(analogReadingThreadId) };
+		if (digitalReadingThreadId) { clearInterval(digitalReadingThreadId) };
+	}
+
+	// Readings
+
+	function requestAnalogReadings() { socket.send('analogReadings') }
+	function requestDigitalReadings() { socket.send('digitalReadings') }
+
+	// State
+
+	function updateState() {
+		socket.send('boardSpecs'); 
+	}
+
+
+	// coming from file(s)
+	// s4aThreads.js
+
+	Process.prototype.reportAnalogReading = function (pin) {
+
+		// If we never activated the pin before, we do so
+		// We'll be luckier next time
+
+		if (!analogReadingThreadId) { 
+			analogReadingThreadId = setInterval(requestAnalogReadings, webSocketRefreshInterval);
+		} else {
+			if (isNil(analogReadings[pin])) { 
+				socket.send("activateAnalogPin&" + pin);
+			} else {
+				return analogReadings[pin];
+			}
+		}
+		return 0;
+	};
+
+	Process.prototype.reportDigitalReading = function (pin) {
+
+		// If we never activated the pin before, we do so
+		// We'll be luckier next time
+
+		if (!digitalReadingThreadId) { 
+			digitalReadingThreadId = setInterval(requestDigitalReadings, webSocketRefreshInterval);
+		} else {
+			if (pin>1) {
+				if (isNil(digitalReadings[pin-2])) {
+					socket.send("activateDigitalPin&" + pin)
+				} else {
+					return (digitalReadings[pin-2] == 1)
+				}
+			}
+		}
+		return false;
+	};
+
+	Process.prototype.connectArduino = function (type, port) {
+		if (this.reportURL(pharoUrl + 'connect?port=' + port + '&type=' + type) === 'OK') {
+			socket.send("boardSpecs");
+			console.log("Board connected", "An Arduino board has been connected.\nHappy prototyping!");
+		} 
+	}
+
+	Process.prototype.servoWrite = function (pin, value) {
+		var numericValue;
+		switch (value[0]) {
+			case "clockwise":
+				numericValue = 1200;
+			break;
+			case "counter-clockwise":
+				numericValue = 1700;
+			break;
+			case "stopped":
+				numericValue = 1500;
+			break;
+			default:
+				numericValue = value;
+			break;
+		}
+		socket.send("servoWrite&" + pin + "&" + numericValue);
+	}
+
+	Process.prototype.digitalWrite = function (pin, boolenValue) {
+		var value = 0;
+		if (boolenValue) { value = 1 };
+		socket.send("digitalWrite&" + pin + "&" + value);
+	}
+
+	Process.prototype.pwmWrite = function (pin, value) {
+		socket.send("pwmWrite&" + pin + "&" + value);
+	}
+
+	Process.prototype.setPinMode = function (pin, mode) {
+
+		var modeChar;
+
+		switch (mode[0]) {
+			case 'digital input':
+				modeChar = 'I';
+				break;
+			case 'digital output':
+				modeChar = 'O';
+				break;
+			case 'PWM':
+				modeChar = 'P';
+				break;
+			case 'servo':
+				modeChar = 'S';
+				break;
+		}
+
+		if (this.reportURL(pharoUrl + 'digitalPinMode?pin=' + pin + '&mode=' + modeChar) === 'OK') {
+			return true; 
+		} 
+	}
+}
+
+
 // not coming from any Snap! original files
 
 // SnapReader ////////////////////////////////////////////////////
@@ -6719,8 +8032,17 @@ SnapSerializer.prototype.loadValue = function (model) {
 
 var fs = require('fs');
 var serializer = new SnapSerializer();
+var filename;
+var isS4Aproject = false;
 
-fs.readFile(process.argv[2], {encoding: 'utf8'}, function(err, data) {
+if (process.argv[2] == '--s4a') { 
+	filename = process.argv[3];
+	isS4Aproject = true;
+} else {
+	filename = process.argv[2];
+}
+
+fs.readFile(filename, {encoding: 'utf8'}, function(err, data) {
     if (err) throw err;
 
     var project = serializer.load(data);
