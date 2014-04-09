@@ -1072,7 +1072,17 @@ SyntaxElement.prototype.labelPart = function (spec) {
             break;
 
 		// Snap4Arduino
-
+		case '%port':
+			part = new InputSlot(
+				null,
+				false,
+				function() { 
+					socket.send("serialPortNames");
+					return serialPortNames
+				} 
+				);
+			part.setContents(Object.keys(serialPortNames)[0]);
+			break;
 		case '%arduinoType':
 			part = new InputSlot(
 				null,
@@ -1081,7 +1091,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				true
 				);
 			part.setContents('ArduinoUNO');
-		break; 
+			break; 
 		case '%servoValue':
 			part = new InputSlot(
 				null,
@@ -1094,7 +1104,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				}
 				);
 			part.setContents(['clockwise']);
-		break;
+			break;
 		case '%pinMode':
 			part = new InputSlot(
 				null,
@@ -1108,7 +1118,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				true
 				);
 			part.setContents(['servo']);
-		break;
+			break;
 		case '%servoPin':
 			part = new InputSlot(
 				null,
@@ -1116,7 +1126,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				function() { return boardSpecs.servoPins },
 				true
 				);
-		break;
+			break;
 		case '%pwmPin':
 			part = new InputSlot(
 				null,
@@ -1124,8 +1134,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				function() { return boardSpecs.pwmPins },
 				true
 				);
-		break;
-
+			break;
 		case '%analogPin':
 			part = new InputSlot(
 				null,
@@ -1133,7 +1142,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				function() { return boardSpecs.analogPins },
 				true
 				);
-		break;
+			break;
 		case '%digitalPin':
 			part = new InputSlot(
 				null,
@@ -1141,7 +1150,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
 				function() { return boardSpecs.digitalPins },
 				true
 				);
-		break;
+			break;
         default:
             nop();
         }
@@ -7835,62 +7844,72 @@ SnapSerializer.prototype.loadValue = function (model) {
 
 // Snap4Arduino ////////////////////////////////////////////////////
 
-if (isS4Aproject) {
-	// coming from file(s)
-	// s4aClient.js
+// coming from file(s)
+// s4aClient.js
 
-	var pharoUrl = "localhost:8080/";
-	var snapUrl = pharoUrl + "s4a.html";
-	var webSocketUrl= "ws://localhost:4001/s4a";
+var pharoUrl = "localhost:8080/";
+var snapUrl = pharoUrl + "s4a.html";
+var webSocketUrl= "ws://localhost:4001/s4a";
 
-	var analogReadings = [];
-	var digitalReadings = [];
-	var analogReadingThreadId;
-	var digitalReadingThreadId;
-	var arduinoTypes = {
-		"Mini"                     : "ArduinoMini",
-		"Pro w/ atmega168"         : "ArduinoPro",
-		"Mega"                     : "ArduinoMega",
-		"Ng or older w/ atmega8"   : "ArduinoATmega8",
-		"Uno"                      : "ArduinoUNO",
-		"Lilypad w/ atmega328"     : "ArduinoLilyPad328",
-		"Lilypad w/ atmega168"     : "ArduinoLilyPad",
-		"Ng or older w/ atmega168" : "ArduinoATmega168",
-		"Pro w/ atmega328"         : "ArduinoPro328",
-		"Diecimila w/ atmega168"   : "ArduinoDiecimila",
-		"Mega 2560"                : "ArduinoMega2560",
-		"Bluetooth"                : "ArduinoBT",
-		"Duemilanove w/ atmega328" : "ArduinoATmega328",
-	};
+var analogReadings = [];
+var digitalReadings = [];
+var analogReadingThreadId;
+var digitalReadingThreadId;
+var serialPortNames = {};
+var arduinoTypes = {
+	"Mini"                     : "ArduinoMini",
+	"Pro w/ atmega168"         : "ArduinoPro",
+	"Mega"                     : "ArduinoMega",
+	"Ng or older w/ atmega8"   : "ArduinoATmega8",
+	"Uno"                      : "ArduinoUNO",
+	"Lilypad w/ atmega328"     : "ArduinoLilyPad328",
+	"Lilypad w/ atmega168"     : "ArduinoLilyPad",
+	"Ng or older w/ atmega168" : "ArduinoATmega168",
+	"Pro w/ atmega328"         : "ArduinoPro328",
+	"Diecimila w/ atmega168"   : "ArduinoDiecimila",
+	"Mega 2560"                : "ArduinoMega2560",
+	"Bluetooth"                : "ArduinoBT",
+	"Duemilanove w/ atmega328" : "ArduinoATmega328",
+};
 
-	var boardSpecs = {
-		"analogPins"  : {},
-		"digitalPins" : {},
-		"servoPins"   : {},
-		"pwmPins"     : {}
-	};
+var boardSpecs = {
+	"analogPins"  : {},
+	"digitalPins" : {},
+	"servoPins"   : {},
+	"pwmPins"     : {}
+};
 
-	// WebSocket
+// WebSocket
 
-	var WebSocket = require('ws');
-	var socket = new WebSocket(webSocketUrl);
+var WebSocket = require('ws');
+var socket; 
 
-	var webSocketRefreshInterval = 10; //milliseconds
+var webSocketRefreshInterval = 10; //milliseconds
+
+
+// Initialize-release
+
+function initializeWebSocket() {
+	socket = new WebSocket(webSocketUrl);
 
 	socket.on('open', function() { initializeAll() });
 
 	socket.on('message', function(message) {
+	
 		messageArray = message.split("&");
 		switch (messageArray[0]) {
 			case 'analogReadings':
 				analogReadings = JSON.parse(messageArray[1]);
-			break;
+				break;
 			case 'digitalReadings':
 				digitalReadings = JSON.parse(messageArray[1]);
-			break;
+				break;
 			case 'boardSpecs':
 				boardSpecs = JSON.parse(messageArray[1]);
-			break;
+				break;
+			case 'serialPortNames':
+				serialPortNames = JSON.parse(messageArray[1]);
+				break;
 		}
 	});
 
@@ -7898,129 +7917,128 @@ if (isS4Aproject) {
 		console.log("Connection lost!", "Lost connection to the server.\nPlease make sure the server is running, then reload this page and try again.");
 		releaseAll();
 	});
+}
 
-	// Initialize-release
+function initializeAll() {
+	socket.send('greetings'); // will send a greeting back if no board is already connected. If it is, will send the boardSpecs
+	setInterval(updateState, webSocketRefreshInterval * 15); // we don't need to keep state too updated, so 15 times slower than realtime is more than ok
+}
 
-	function initializeAll() {
-		socket.send('greetings'); // will send a greeting back if no board is already connected. If it is, will send the boardSpecs
-		setInterval(updateState, webSocketRefreshInterval * 15); // we don't need to keep state too updated, so 15 times slower than realtime is more than ok
-	}
+function releaseAll() {
+	if (analogReadingThreadId) { clearInterval(analogReadingThreadId) };
+	if (digitalReadingThreadId) { clearInterval(digitalReadingThreadId) };
+}
 
-	function releaseAll() {
-		if (analogReadingThreadId) { clearInterval(analogReadingThreadId) };
-		if (digitalReadingThreadId) { clearInterval(digitalReadingThreadId) };
-	}
+// Readings
 
-	// Readings
+function requestAnalogReadings() { socket.send('analogReadings') }
+function requestDigitalReadings() { socket.send('digitalReadings') }
 
-	function requestAnalogReadings() { socket.send('analogReadings') }
-	function requestDigitalReadings() { socket.send('digitalReadings') }
+// State
 
-	// State
-
-	function updateState() {
-		socket.send('boardSpecs'); 
-	}
+function updateState() {
+	socket.send('serialPortNames') // will send back possible serial port names where an Arduino may be connected
+	socket.send('boardSpecs'); 
+}
 
 
-	// coming from file(s)
-	// s4aThreads.js
+// coming from file(s)
+// s4aThreads.js
 
-	Process.prototype.reportAnalogReading = function (pin) {
+Process.prototype.reportAnalogReading = function (pin) {
 
-		// If we never activated the pin before, we do so
-		// We'll be luckier next time
+	// If we never activated the pin before, we do so
+	// We'll be luckier next time
 
-		if (!analogReadingThreadId) { 
-			analogReadingThreadId = setInterval(requestAnalogReadings, webSocketRefreshInterval);
+	if (!analogReadingThreadId) { 
+		analogReadingThreadId = setInterval(requestAnalogReadings, webSocketRefreshInterval);
+	} else {
+		if (isNil(analogReadings[pin])) { 
+			socket.send("activateAnalogPin&" + pin);
 		} else {
-			if (isNil(analogReadings[pin])) { 
-				socket.send("activateAnalogPin&" + pin);
+			return analogReadings[pin];
+		}
+	}
+	return 0;
+};
+
+Process.prototype.reportDigitalReading = function (pin) {
+
+	// If we never activated the pin before, we do so
+	// We'll be luckier next time
+
+	if (!digitalReadingThreadId) { 
+		digitalReadingThreadId = setInterval(requestDigitalReadings, webSocketRefreshInterval);
+	} else {
+		if (pin>1) {
+			if (isNil(digitalReadings[pin-2])) {
+				socket.send("activateDigitalPin&" + pin)
 			} else {
-				return analogReadings[pin];
+				return (digitalReadings[pin-2] == 1)
 			}
 		}
-		return 0;
-	};
-
-	Process.prototype.reportDigitalReading = function (pin) {
-
-		// If we never activated the pin before, we do so
-		// We'll be luckier next time
-
-		if (!digitalReadingThreadId) { 
-			digitalReadingThreadId = setInterval(requestDigitalReadings, webSocketRefreshInterval);
-		} else {
-			if (pin>1) {
-				if (isNil(digitalReadings[pin-2])) {
-					socket.send("activateDigitalPin&" + pin)
-				} else {
-					return (digitalReadings[pin-2] == 1)
-				}
-			}
-		}
-		return false;
-	};
-
-	Process.prototype.connectArduino = function (type, port) {
-		if (this.reportURL(pharoUrl + 'connect?port=' + port + '&type=' + type) === 'OK') {
-			socket.send("boardSpecs");
-			console.log("Board connected", "An Arduino board has been connected.\nHappy prototyping!");
-		} 
 	}
+	return false;
+};
 
-	Process.prototype.servoWrite = function (pin, value) {
-		var numericValue;
-		switch (value[0]) {
-			case "clockwise":
-				numericValue = 1200;
+Process.prototype.connectArduino = function (type, port) {
+	if (this.reportURL(pharoUrl + 'connect?port=' + port + '&type=' + type) === 'OK') {
+		socket.send("boardSpecs");
+		console.log("Board connected", "An Arduino board has been connected.\nHappy prototyping!");
+	} 
+}
+
+Process.prototype.servoWrite = function (pin, value) {
+	var numericValue;
+	switch (value[0]) {
+		case "clockwise":
+			numericValue = 1200;
+		break;
+		case "counter-clockwise":
+			numericValue = 1700;
+		break;
+		case "stopped":
+			numericValue = 1500;
+		break;
+		default:
+			numericValue = value;
+		break;
+	}
+	socket.send("servoWrite&" + pin + "&" + numericValue);
+}
+
+Process.prototype.digitalWrite = function (pin, boolenValue) {
+	var value = 0;
+	if (boolenValue) { value = 1 };
+	socket.send("digitalWrite&" + pin + "&" + value);
+}
+
+Process.prototype.pwmWrite = function (pin, value) {
+	socket.send("pwmWrite&" + pin + "&" + value);
+}
+
+Process.prototype.setPinMode = function (pin, mode) {
+
+	var modeChar;
+
+	switch (mode[0]) {
+		case 'digital input':
+			modeChar = 'I';
 			break;
-			case "counter-clockwise":
-				numericValue = 1700;
+		case 'digital output':
+			modeChar = 'O';
 			break;
-			case "stopped":
-				numericValue = 1500;
+		case 'PWM':
+			modeChar = 'P';
 			break;
-			default:
-				numericValue = value;
+		case 'servo':
+			modeChar = 'S';
 			break;
-		}
-		socket.send("servoWrite&" + pin + "&" + numericValue);
 	}
 
-	Process.prototype.digitalWrite = function (pin, boolenValue) {
-		var value = 0;
-		if (boolenValue) { value = 1 };
-		socket.send("digitalWrite&" + pin + "&" + value);
-	}
-
-	Process.prototype.pwmWrite = function (pin, value) {
-		socket.send("pwmWrite&" + pin + "&" + value);
-	}
-
-	Process.prototype.setPinMode = function (pin, mode) {
-
-		var modeChar;
-
-		switch (mode[0]) {
-			case 'digital input':
-				modeChar = 'I';
-				break;
-			case 'digital output':
-				modeChar = 'O';
-				break;
-			case 'PWM':
-				modeChar = 'P';
-				break;
-			case 'servo':
-				modeChar = 'S';
-				break;
-		}
-
-		if (this.reportURL(pharoUrl + 'digitalPinMode?pin=' + pin + '&mode=' + modeChar) === 'OK') {
-			return true; 
-		} 
-	}
+	if (this.reportURL(pharoUrl + 'digitalPinMode?pin=' + pin + '&mode=' + modeChar) === 'OK') {
+		return true; 
+	} 
 }
 
 
@@ -8033,11 +8051,10 @@ if (isS4Aproject) {
 var fs = require('fs');
 var serializer = new SnapSerializer();
 var filename;
-var isS4Aproject = false;
 
 if (process.argv[2] == '--s4a') { 
 	filename = process.argv[3];
-	isS4Aproject = true;
+	initializeWebSocket();
 } else {
 	filename = process.argv[2];
 }
