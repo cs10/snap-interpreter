@@ -1,4 +1,27 @@
+// Snap! & Snap4Arduino command line interpreter
+// (Ɔ) Bernat Romagosa 2014 @ Citilab
+//
+// http://s4a.cat
+// http://blog.s4a.cat
+// http://s4a.cat/snap
+// http://edutec.citilab.eu
+// http://citilab.eu
+//
+// Based on Jens Mönig's great work
+
+
+// initializations and global stuff
+
 var http = require('http');
+var firmata = require('./node_modules/firmata/lib/firmata');
+var board;
+var isDebugMode = false;
+
+function debugLog(aString) {
+	if (isDebugMode) {
+		console.log('debug: ' + aString);
+	}
+}
 
 // coming from file(s)
 // morphic.js
@@ -743,7 +766,7 @@ SyntaxElement.prototype.labelPart = function (spec) {
         case '%inputName':
             part = new ReporterBlock();
             part.setSpec(localize('Input name'));
-            break;
+            break;s
         case '%s':
             part = new InputSlot();
             break;
@@ -7945,47 +7968,46 @@ function updateState() {
 // coming from file(s)
 // s4aThreads.js
 
-Process.prototype.reportAnalogReading = function (pin) {
-
-	// If we never activated the pin before, we do so
-	// We'll be luckier next time
-
-	if (!analogReadingThreadId) { 
-		analogReadingThreadId = setInterval(requestAnalogReadings, webSocketRefreshInterval);
-	} else {
-		if (isNil(analogReadings[pin])) { 
-			socket.send("activateAnalogPin&" + pin);
-		} else {
-			return analogReadings[pin];
-		}
-	}
-	return 0;
-};
-
-Process.prototype.reportDigitalReading = function (pin) {
-
-	// If we never activated the pin before, we do so
-	// We'll be luckier next time
-
-	if (!digitalReadingThreadId) { 
-		digitalReadingThreadId = setInterval(requestDigitalReadings, webSocketRefreshInterval);
-	} else {
-		if (pin>1) {
-			if (isNil(digitalReadings[pin-2])) {
-				socket.send("activateDigitalPin&" + pin)
-			} else {
-				return (digitalReadings[pin-2] == 1)
-			}
-		}
-	}
-	return false;
-};
-
 Process.prototype.connectArduino = function (type, port) {
-	if (this.reportURL(pharoUrl + 'connect?port=' + port + '&type=' + type) === 'OK') {
-		socket.send("boardSpecs");
-		console.log("Board connected", "An Arduino board has been connected.\nHappy prototyping!");
-	} 
+	var myself = this;
+	if (board === undefined && myself.context.boardConnected === undefined) {
+		board = new firmata.Board(port, function(err) { 
+			myself.context.boardConnected = true;
+			if (err) { 
+				debugLog(err); 
+				return 
+			} else {
+				debugLog('An Arduino board has been connected. Happy prototyping!');
+			}
+		});
+	}
+	if (myself.context.boardConnected) {
+		return null;
+	}
+	this.pushContext('doYield');
+	this.pushContext();
+}
+
+Process.prototype.setPinMode = function (pin, mode) {
+	var val;
+	switch(mode[0]) {
+		case 'digital input': val = board.MODES.INPUT; break;
+		case 'digital output': val = board.MODES.OUTPUT; break;
+		// not used, but left it here anyway:
+		case 'analog input': val = board.MODES.ANALOG; break;
+		case 'PWM': val = board.MODES.PWM; break;
+		case 'servo': val = board.MODES.SERVO; break;
+	}
+	if (this.context.pinSet === undefined) {
+		board.pinMode(pin, val);
+	}
+	if (board.pins[pin].mode === val) {
+		this.context.pinSet = true;
+		debugLog('pin ' + pin + ' set to mode ' + mode);
+		return null;
+	}
+	this.pushContext('doYield');
+	this.pushContext();
 }
 
 Process.prototype.servoWrite = function (pin, value) {
@@ -8004,41 +8026,57 @@ Process.prototype.servoWrite = function (pin, value) {
 			numericValue = value;
 		break;
 	}
-	socket.send("servoWrite&" + pin + "&" + numericValue);
+	board.servoWrite(pin, numericValue);
+	debugLog('servo value ' + numericValue + ' written to pin ' + pin);
+	return null;
 }
 
-Process.prototype.digitalWrite = function (pin, boolenValue) {
-	var value = 0;
-	if (boolenValue) { value = 1 };
-	socket.send("digitalWrite&" + pin + "&" + value);
+Process.prototype.reportAnalogReading = function (pin) {
+	var myself = this;
+	if (analogReadings[pin] === undefined && myself.context.startedReading === undefined) {
+		myself.context.startedReading = true;
+		board.pinMode(board.analogPins[pin],board.MODES.ANALOG);
+		board.analogRead(pin, function(val) {
+			analogReadings[pin] = val;
+		});
+		return 0;
+	} else if (analogReadings[pin]) {
+		return analogReadings[pin];
+	} 
+	this.pushContext('doYield');
+	this.pushContext();
+};
+	
+Process.prototype.reportDigitalReading = function (pin) {
+
+	// REVIEW!!
+
+	var myself = this;
+	if (digitalReadings[pin] === undefined && myself.context.startedReading === undefined) {
+		myself.context.startedReading = true;
+		board.pinMode(board.digitalPins[pin],board.MODES.INPUT);
+		board.digitalRead(pin, function(val) {
+			digitalReadings[pin] = (val == 1);
+		});
+		return 0;
+	} else if (digitalReadings[pin] != undefined) {
+		return digitalReadings[pin];
+	} 
+	this.pushContext('doYield');
+	this.pushContext();
+};
+
+
+Process.prototype.digitalWrite = function (pin, booleanValue) {
+	var val;
+	if (booleanValue) { val = board.HIGH } else { val = board.LOW };
+	board.digitalWrite(pin, val);
+	debugLog('digital value ' + booleanValue + ' written to pin ' + pin);
+	return null;
 }
 
 Process.prototype.pwmWrite = function (pin, value) {
 	socket.send("pwmWrite&" + pin + "&" + value);
-}
-
-Process.prototype.setPinMode = function (pin, mode) {
-
-	var modeChar;
-
-	switch (mode[0]) {
-		case 'digital input':
-			modeChar = 'I';
-			break;
-		case 'digital output':
-			modeChar = 'O';
-			break;
-		case 'PWM':
-			modeChar = 'P';
-			break;
-		case 'servo':
-			modeChar = 'S';
-			break;
-	}
-
-	if (this.reportURL(pharoUrl + 'digitalPinMode?pin=' + pin + '&mode=' + modeChar) === 'OK') {
-		return true; 
-	} 
 }
 
 
@@ -8052,12 +8090,10 @@ var fs = require('fs');
 var serializer = new SnapSerializer();
 var filename;
 
-if (process.argv[2] == '--s4a') { 
-	filename = process.argv[3];
-	initializeWebSocket();
-} else {
-	filename = process.argv[2];
-}
+//if (process.argv.indexOf('--s4a') > 0) { initializeWebSocket() } 
+if (process.argv.indexOf('--debug') > 0) { isDebugMode = true } 
+
+filename = process.argv.pop();
 
 fs.readFile(filename, {encoding: 'utf8'}, function(err, data) {
     if (err) throw err;
@@ -8071,3 +8107,4 @@ fs.readFile(filename, {encoding: 'utf8'}, function(err, data) {
         setImmediate(tick);
     })();
 });
+
