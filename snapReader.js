@@ -754,7 +754,6 @@ SyntaxElement.prototype.labelPart = function (spec) {
         case '%words':
             part = new MultiArgument('%s', null, 0);
             part.addInput(); // allow for default value setting
-            part.addInput(); // allow for default value setting
             part.isStatic = false;
             break;
         case '%exp':
@@ -2252,6 +2251,27 @@ MultiArgument.prototype.setContents = function (anArray) {
         }
     }
 };
+
+MultiArgument.prototype.addInput = function (contents) {
+    var i, name,
+        newPart = this.label(this.slotSpec),
+        idx = this.children.length - 1;
+    if (contents) {
+        newPart.setContents(contents);
+    } else if (this.elementSpec === '%scriptVars') {
+        name = '';
+        i = idx;
+        while (i > 0) {
+            name = String.fromCharCode(97 + (i - 1) % 26) + name;
+            i = Math.floor((i - 1) / 26);
+        }
+        newPart.setContents(name);
+    } else if (contains(['%parms', '%ringparms'], this.elementSpec)) {
+        newPart.setContents('#' + idx);
+    }
+    newPart.parent = this;
+    this.children.splice(idx, 0, newPart);
+}
 
 // MultiArgument code mapping
 
@@ -7728,7 +7748,7 @@ SnapSerializer.prototype.loadInput = function (model, input, block) {
         block.silentReplaceInput(input, this.loadBlock(model, true));
     } else {
         val = this.loadValue(model);
-        if (val && input) { input.setContents(val) }
+        if (val && input && input.setContents) { input.setContents(val) }
     }
 };
 
